@@ -66,6 +66,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllMessages, setShowAllMessages] = useState(false);
   const [campaignData, setCampaignData] = useState(null);
+  const [lastSendError, setLastSendError] = useState(null);
   const [isActivelyRescheduled, setIsActivelyRescheduled] = useState(false);
   const [previewMessage, setPreviewMessage] = useState('');
   const statusInterval = useRef(null);
@@ -152,6 +153,7 @@ function App() {
           setScreen('complete');
         }
       }
+      if (status?.lastSendError) setLastSendError(status.lastSendError);
     } catch (e) {
       console.warn('Status poll failed:', e);
     }
@@ -409,6 +411,7 @@ function App() {
   if (screen === 'campaign') return (
     <CampaignScreen
       campaign={campaignData}
+      lastSendError={lastSendError}
       onPause={handlePause}
       onResume={handleResume}
       onCancel={handleCancel}
@@ -769,7 +772,7 @@ function FriendRow({ friend, checked, onToggle }) {
 
 // ─── Screen: Active Campaign ──────────────────────────────────────────────────
 
-function CampaignScreen({ campaign, onPause, onResume, onCancel }) {
+function CampaignScreen({ campaign, lastSendError, onPause, onResume, onCancel }) {
   if (!campaign) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 580, background: '#1a1a2e' }}>
@@ -817,6 +820,15 @@ function CampaignScreen({ campaign, onPause, onResume, onCancel }) {
         <StatCard label="Est. complete" value={estComplete || 'Calculating...'} />
         <StatCard label="Days running" value={`${daysElapsed} day${daysElapsed !== 1 ? 's' : ''}`} />
       </div>
+
+      {/* Last send error — shows if something failed */}
+      {lastSendError && (
+        <div style={{ background: '#1a0a0a', border: '1px solid #7f1d1d', borderRadius: 8, padding: '8px 12px', marginBottom: 10 }}>
+          <p style={{ fontSize: 11, color: '#f87171', lineHeight: 1.4 }}>
+            ⚠️ Last error ({lastSendError.name}): {lastSendError.error}
+          </p>
+        </div>
+      )}
 
       {/* Warning banner — only show when actively sending (not paused) */}
       {isActive && (

@@ -141,13 +141,16 @@ async function sendToFriend(friendId, campaign) {
   const variationIndex = getRandomVariationIndex(lastVariation);
   const message = applyMessage(variationIndex, friend.firstName || friend.name.split(' ')[0]);
 
-  // Open messenger.com conversation in background
+  // Open messenger.com conversation — active:true so React/Lexical UI fully mounts
+  // (background tabs don't initialize Messenger's editor reliably)
   const url = `https://www.messenger.com/t/${friendId}`;
-  const tab = await new Promise(resolve => chrome.tabs.create({ url, active: false }, resolve));
+  console.log(`[FSI] Opening tab: ${url}`);
+  const tab = await new Promise(resolve => chrome.tabs.create({ url, active: true }, resolve));
 
   // Wait for page to fully load, then give Messenger UI time to mount
   await waitForTabLoad(tab.id, 20000);
   await sleep(4000);
+  console.log(`[FSI] Tab loaded, looking for input...`);
 
   try {
     const exec = (func, args) => chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
@@ -160,7 +163,8 @@ async function sendToFriend(friendId, campaign) {
       if (r[0]?.result) { inputFound = true; break; }
       await sleep(500);
     }
-    if (!inputFound) throw new Error('Input not found after 12s');
+    if (!inputFound) throw new Error('Input not found after 12s — Messenger UI may not have loaded');
+    console.log('[FSI] Input found, pasting message...');
 
     // Step 2: Check defer (user actively on this tab)
     const focusCheck = await exec(() => document.hasFocus());
@@ -181,7 +185,8 @@ async function sendToFriend(friendId, campaign) {
       input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
       return (input.textContent || '').trim().length > 0;
     }, [message]);
-    if (!pasteOk[0]?.result) throw new Error('Paste did not insert text');
+    if (!pasteOk[0]?.result) throw new Error('Paste did not insert text into input');
+    console.log('[FSI] Message pasted, pressing Enter...');
 
     await sleep(700);
 
@@ -226,6 +231,8 @@ async function sendToFriend(friendId, campaign) {
       sentAt: null,
       error: err.message
     };
+    // Store last error for popup debugging
+    await setStorage({ lastSendError: { name: friend.name, error: err.message, at: now } });
     chrome.tabs.remove(tab.id).catch(() => {});
     return false;
   }
@@ -456,7 +463,7 @@ async function handleCancelCampaign() {
 }
 
 async function getStatus() {
-  const data = await getStorage(['campaign', 'friends']);
+  const data = await getStorage(['campaign', 'friends', 'lastSendError']);
   const campaign = data.campaign;
   if (!campaign) return { campaign: null };
 
@@ -493,7 +500,8 @@ async function getStatus() {
       nextAlarmMinutes,
       estComplete: estCompleteStr,
       daysElapsed
-    }
+    },
+    lastSendError: data.lastSendError || null
   };
 }
 
