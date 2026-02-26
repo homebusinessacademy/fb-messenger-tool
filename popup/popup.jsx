@@ -260,7 +260,8 @@ function App() {
             ? href.match(/id=(\d+)/)?.[1]
             : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
           const firstName = name.split(' ')[0] || '';
-          const profilePhotoUrl = l.querySelector('img')?.src || '';
+          const svgImg = l.querySelector('svg image');
+          const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
           return { id: userId, name, firstName, profilePhotoUrl, hbaMember: false };
         }).filter(f => f.name && f.id && f.name.length > 1);
       };
