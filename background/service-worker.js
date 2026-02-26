@@ -165,16 +165,10 @@ async function sendToFriend(friendId, campaign) {
     if (!inputFound) throw new Error('Input not found after 12s — Messenger UI may not have loaded');
     console.log('[FSI] Input found, pasting message...');
 
-    // Step 2: Check defer (user actively on this tab)
-    const focusCheck = await exec(() => document.hasFocus());
-    if (focusCheck[0]?.result) {
-      console.log('[FSI] User is on Messenger — deferring.');
-      chrome.tabs.remove(tab.id).catch(() => {});
-      scheduleAlarm(DEFER_MIN);
-      return 'deferred';
-    }
+    // Note: Removed defer check — it was broken (we open tab as active, so hasFocus always true)
+    // User chose to start campaign; we'll send. If they're chatting, they can pause.
 
-    // Step 3: Paste message into input
+    // Step 2: Paste message into input
     const pasteOk = await exec((msg) => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
       if (!input) return false;
