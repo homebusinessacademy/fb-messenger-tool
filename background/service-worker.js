@@ -45,10 +45,14 @@ function getRandomVariationIndex(lastIndex = null) {
 const MAX_DAILY = 10;
 const WINDOW_START_HOUR = 9;   // 9am
 const WINDOW_END_HOUR = 20;    // 8pm
-const MIN_GAP_MIN = 30;
-const MAX_GAP_MIN = 60;
+
+// ⚠️ TEST MODE — set TEST_MODE = false before going live
+const TEST_MODE = true;
+const MIN_GAP_MIN = TEST_MODE ? 1   : 30;
+const MAX_GAP_MIN = TEST_MODE ? 2   : 60;
+const DEFER_MIN   = TEST_MODE ? 1   : 15;
+
 const ALARM_NAME = 'send-next-message';
-const DEFER_MIN = 15;
 
 // ─── Storage Helpers ─────────────────────────────────────────────────────────
 
