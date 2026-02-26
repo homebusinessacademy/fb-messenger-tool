@@ -154,8 +154,23 @@ async function sendToFriend(friendId, campaign) {
   try {
     const exec = (func, args) => chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
 
-    // Step 1: Poll for input (up to 12s, in SW — no async needed inside executeScript)
-    const INPUT_SEL = '[role="textbox"][contenteditable="true"]';
+    // Step 0: Handle encryption upgrade prompt ("Continue" button)
+    const clickedContinue = await exec(() => {
+      // Look for Continue button in encryption upgrade dialog
+      const buttons = Array.from(document.querySelectorAll('[role="button"]'));
+      const continueBtn = buttons.find(b => b.textContent?.trim() === 'Continue');
+      if (continueBtn) {
+        continueBtn.click();
+        return true;
+      }
+      return false;
+    });
+    if (clickedContinue[0]?.result) {
+      console.log('[FSI] Clicked encryption Continue button, waiting for UI...');
+      await sleep(2000);
+    }
+
+    // Step 1: Poll for input (up to 12s)
     let inputFound = false;
     for (let i = 0; i < 24; i++) {
       const r = await exec(() => !!document.querySelector('[role="textbox"][contenteditable="true"]'));
