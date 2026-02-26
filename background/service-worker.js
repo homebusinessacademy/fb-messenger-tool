@@ -183,55 +183,61 @@ async function sendToFriend(friendId, campaign) {
     // Note: Removed defer check — it was broken (we open tab as active, so hasFocus always true)
     // User chose to start campaign; we'll send. If they're chatting, they can pause.
 
-    // Step 2: Type message character by character (most reliable for Lexical)
-    // This ensures Lexical's internal state stays in sync
-    console.log('[FSI] Typing message character by character...');
+    // Step 2: Type message using execCommand (simpler, handles cursor automatically)
+    console.log('[FSI] Inserting message via execCommand...');
     
-    for (let i = 0; i < message.length; i++) {
-      const char = message[i];
-      await exec((c) => {
+    const insertResult = await exec((msg) => {
+      const input = document.querySelector('[role="textbox"][contenteditable="true"]');
+      if (!input) return { ok: false, error: 'input not found' };
+      
+      input.focus();
+      
+      // Clear any existing content first
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+      
+      // Insert full message at once
+      const ok = document.execCommand('insertText', false, msg);
+      
+      // Check what actually got inserted
+      const actual = (input.textContent || '').trim();
+      return { ok: actual.length > 0, method: ok ? 'execCommand' : 'fallback', actual: actual.substring(0, 50) };
+    }, [message]);
+    
+    // If execCommand didn't work, try InputEvent approach
+    if (!insertResult[0]?.result?.ok) {
+      console.log('[FSI] execCommand failed, trying InputEvent approach...');
+      await exec((msg) => {
         const input = document.querySelector('[role="textbox"][contenteditable="true"]');
         if (!input) return;
         input.focus();
+        input.textContent = '';
         
-        // Simulate full keystroke sequence
-        const opts = { key: c, code: `Key${c.toUpperCase()}`, bubbles: true, cancelable: true };
-        input.dispatchEvent(new KeyboardEvent('keydown', opts));
-        
-        // InputEvent is what Lexical actually listens for
+        // Dispatch events that Lexical listens for
         input.dispatchEvent(new InputEvent('beforeinput', { 
-          bubbles: true, cancelable: true, inputType: 'insertText', data: c 
+          bubbles: true, cancelable: true, inputType: 'insertText', data: msg 
         }));
         
-        // For contenteditable, we need to actually insert the character
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0);
-          range.deleteContents();
-          range.insertNode(document.createTextNode(c));
-          range.collapse(false);
-        }
+        // Manually set content
+        const p = input.querySelector('p') || input;
+        p.textContent = msg;
         
         input.dispatchEvent(new InputEvent('input', { 
-          bubbles: true, inputType: 'insertText', data: c 
+          bubbles: true, inputType: 'insertText', data: msg 
         }));
-        input.dispatchEvent(new KeyboardEvent('keyup', opts));
-      }, [char]);
-      
-      // Small delay every 10 chars to let React catch up
-      if (i % 10 === 9) await sleep(50);
+      }, [message]);
     }
     
     // Verify text was inserted
-    const insertCheck = await exec((expected) => {
+    const verifyInsert = await exec(() => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
       const actual = (input?.textContent || '').trim();
-      return { ok: actual.length > 0, actual: actual.substring(0, 50), expected: expected.substring(0, 50) };
-    }, [message]);
+      return { ok: actual.length > 0, actual: actual.substring(0, 50) };
+    });
     
-    const insertResult = insertCheck[0]?.result;
-    if (!insertResult?.ok) throw new Error(`Text insert failed: got "${insertResult?.actual || 'empty'}"`);
-    console.log('[FSI] Message typed, pressing Enter...');
+    const insertVerify = verifyInsert[0]?.result;
+    if (!insertVerify?.ok) throw new Error(`Text insert failed: got "${insertVerify?.actual || 'empty'}"`);
+    console.log(`[FSI] Message inserted: "${insertVerify.actual}...", pressing Enter...`);
 
     await sleep(700);
 
