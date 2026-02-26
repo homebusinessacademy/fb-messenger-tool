@@ -880,8 +880,11 @@ function CompleteScreen({ campaign, onNewCampaign }) {
         marginBottom: 32,
         width: '100%'
       }}>
+        <p style={{ fontSize: 16, color: '#fbbf24', fontWeight: 600, marginBottom: 8 }}>
+          WAHOOOO! Way to go! 🙌
+        </p>
         <p style={{ fontSize: 14, color: '#94a3b8', lineHeight: 1.6 }}>
-          💬 Check your Messenger inbox — people are responding!
+          Be sure to check your inbox and get everyone who said "Yes" your link!
         </p>
       </div>
 

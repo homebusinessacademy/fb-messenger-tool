@@ -271,6 +271,9 @@ async function sendToFriend(friendId, campaign) {
       campaign.sentToday = (campaign.sentToday || 0) + 1;
       campaign.lastVariationIndex = variationIndex;
       
+      // Save immediately so we don't lose the record
+      await setStorage({ campaign });
+      
       // Update badge with today's progress
       const totalSent = Object.values(campaign.sendRecords).filter(r => r.status === 'sent').length;
       chrome.action.setBadgeText({ text: `${totalSent}` });
