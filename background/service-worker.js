@@ -340,6 +340,30 @@ async function handleSendAlarm() {
 
 // ─── Chrome Event Listeners ──────────────────────────────────────────────────
 
+// ─── Alarm Recovery ──────────────────────────────────────────────────────────
+// Called on every SW startup — reschedules alarm if campaign is active but alarm is missing
+
+async function recoverAlarmIfNeeded() {
+  const { campaign } = await getStorage(['campaign']);
+  if (!campaign || campaign.status !== 'active') return;
+
+  const alarms = await new Promise(resolve => chrome.alarms.getAll(resolve));
+  const hasAlarm = alarms.some(a => a.name === ALARM_NAME);
+  if (hasAlarm) return;
+
+  console.log('[FSI] Recovery: active campaign found but no alarm — rescheduling.');
+  if (isInWindow() && (campaign.sentToday || 0) < MAX_DAILY) {
+    scheduleAlarm(1);
+  } else {
+    scheduleAlarm(minutesUntilWindowOpen());
+  }
+}
+
+// Run recovery on every SW wake (install, update, Chrome start, SW restart)
+chrome.runtime.onInstalled.addListener(() => recoverAlarmIfNeeded());
+chrome.runtime.onStartup.addListener(() => recoverAlarmIfNeeded());
+recoverAlarmIfNeeded(); // also runs immediately when SW first loads
+
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === ALARM_NAME) {
     handleSendAlarm();
