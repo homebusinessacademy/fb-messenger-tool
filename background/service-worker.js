@@ -183,12 +183,12 @@ async function sendToFriend(friendId, campaign) {
     // Note: Removed defer check — it was broken (we open tab as active, so hasFocus always true)
     // User chose to start campaign; we'll send. If they're chatting, they can pause.
 
-    // Step 2: Type message using execCommand (simpler, handles cursor automatically)
+    // Step 2: Insert message via execCommand (proven working)
     console.log('[FSI] Inserting message via execCommand...');
     
-    const insertResult = await exec((msg) => {
+    await exec((msg) => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
-      if (!input) return { ok: false, error: 'input not found' };
+      if (!input) return;
       
       input.focus();
       
@@ -197,36 +197,11 @@ async function sendToFriend(friendId, campaign) {
       document.execCommand('delete', false, null);
       
       // Insert full message at once
-      const ok = document.execCommand('insertText', false, msg);
-      
-      // Check what actually got inserted
-      const actual = (input.textContent || '').trim();
-      return { ok: actual.length > 0, method: ok ? 'execCommand' : 'fallback', actual: actual.substring(0, 50) };
+      document.execCommand('insertText', false, msg);
     }, [message]);
     
-    // If execCommand didn't work, try InputEvent approach
-    if (!insertResult[0]?.result?.ok) {
-      console.log('[FSI] execCommand failed, trying InputEvent approach...');
-      await exec((msg) => {
-        const input = document.querySelector('[role="textbox"][contenteditable="true"]');
-        if (!input) return;
-        input.focus();
-        input.textContent = '';
-        
-        // Dispatch events that Lexical listens for
-        input.dispatchEvent(new InputEvent('beforeinput', { 
-          bubbles: true, cancelable: true, inputType: 'insertText', data: msg 
-        }));
-        
-        // Manually set content
-        const p = input.querySelector('p') || input;
-        p.textContent = msg;
-        
-        input.dispatchEvent(new InputEvent('input', { 
-          bubbles: true, inputType: 'insertText', data: msg 
-        }));
-      }, [message]);
-    }
+    // Brief pause to let React/Lexical sync
+    await sleep(300);
     
     // Verify text was inserted
     const verifyInsert = await exec(() => {
@@ -236,7 +211,7 @@ async function sendToFriend(friendId, campaign) {
     });
     
     const insertVerify = verifyInsert[0]?.result;
-    if (!insertVerify?.ok) throw new Error(`Text insert failed: got "${insertVerify?.actual || 'empty'}"`);
+    if (!insertVerify?.ok) throw new Error(`Text insert failed: input is empty`);
     console.log(`[FSI] Message inserted: "${insertVerify.actual}...", pressing Enter...`);
 
     await sleep(700);
