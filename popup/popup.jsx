@@ -127,51 +127,73 @@ function App() {
 
   // ─── Load Friends ──────────────────────────────────────────────────────────
 
+  // Wait for a tab to finish loading
+  function waitForTabLoad(tabId, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(); // timeout — try anyway
+      }, timeoutMs);
+
+      function listener(id, info) {
+        if (id === tabId && info.status === 'complete') {
+          clearTimeout(timer);
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      }
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+  }
+
+  // Send message to tab with retries (content script may not be ready instantly)
+  function sendToTabWithRetry(tabId, message, maxRetries = 8, delayMs = 2000) {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      function attempt() {
+        attempts++;
+        chrome.tabs.sendMessage(tabId, message, response => {
+          if (chrome.runtime.lastError) {
+            if (attempts < maxRetries) {
+              setTimeout(attempt, delayMs);
+            } else {
+              reject(new Error(chrome.runtime.lastError.message));
+            }
+          } else {
+            resolve(response);
+          }
+        });
+      }
+      attempt();
+    });
+  }
+
   async function handleLoadFriends() {
     setScreen('loading');
     setLoadProgress(0);
 
     try {
-      // First fetch HBA members in the background
+      // Fetch HBA members in the background
       const hbaResult = await sendToSW('FETCH_HBA_MEMBERS').catch(() => ({ members: [] }));
       const memberSet = new Set(hbaResult.members || []);
       setHbaMembers(memberSet);
 
-      // Find or create a Facebook tab for scraping
-      const tabs = await new Promise(resolve =>
-        chrome.tabs.query({ url: '*://*.facebook.com/*' }, resolve)
+      // Always open a NEW background tab for scraping — don't hijack current FB tab
+      const fbTab = await new Promise(resolve =>
+        chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
       );
 
-      let fbTab;
-      if (tabs.length > 0) {
-        fbTab = tabs[0];
-      } else {
-        fbTab = await new Promise(resolve =>
-          chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
-        );
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
+      // Wait for tab to fully load
+      await waitForTabLoad(fbTab.id, 20000);
+      // Extra buffer for content script to initialize
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Navigate to friends list
-      if (!fbTab.url?.includes('/friends')) {
-        await new Promise(resolve => {
-          chrome.tabs.update(fbTab.id, { url: 'https://www.facebook.com/friends/list' }, resolve);
+      // Trigger scraping with retry logic
+      const result = await sendToTabWithRetry(fbTab.id, { type: 'SCRAPE_FRIENDS' }, 8, 2000)
+        .finally(() => {
+          // Always close the scraping tab when done
+          chrome.tabs.remove(fbTab.id).catch(() => {});
         });
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-
-      // Trigger scraping via content script
-      const result = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Scraping timeout')), 120000);
-        chrome.tabs.sendMessage(fbTab.id, { type: 'SCRAPE_FRIENDS' }, response => {
-          clearTimeout(timeout);
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(response);
-          }
-        });
-      });
 
       if (result?.friends) {
         // Mark HBA members
