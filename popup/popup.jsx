@@ -546,7 +546,7 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
         </button>
 
         {showAllMessages && (
-          <div style={{ marginTop: 10, borderTop: '1px solid #2a2a4a', paddingTop: 10 }}>
+          <div style={{ marginTop: 10, borderTop: '1px solid #2a2a4a', paddingTop: 10, maxHeight: 220, overflowY: 'auto' }}>
             {MESSAGE_VARIATIONS.map((v, i) => (
               <div key={i} style={{ marginBottom: 10 }}>
                 <p style={{ fontSize: 10, color: '#475569', marginBottom: 3 }}>Variation {i + 1}</p>
