@@ -22,6 +22,38 @@ function getFromStorage(keys) {
   return new Promise(resolve => chrome.storage.local.get(keys, resolve));
 }
 
+// ─── HBA Membership Matching ──────────────────────────────────────────────────
+// Robust match: try full name, then first+last (strips middle names)
+function isHbaMember(memberSet, fullName) {
+  if (!fullName || memberSet.size === 0) return false;
+  const nameLower = fullName.toLowerCase().trim();
+
+  // 1. Exact full name match
+  if (memberSet.has(nameLower)) return true;
+
+  // 2. First + last only (strip middle names from both sides)
+  const parts = nameLower.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const firstLast = `${parts[0]} ${parts[parts.length - 1]}`;
+    if (memberSet.has(firstLast)) return true;
+  }
+
+  // 3. Check if any member name starts with the friend's first name + last name
+  // (handles cases where HBA has middle name but Facebook doesn't, or vice versa)
+  if (parts.length >= 2) {
+    const firstName = parts[0];
+    const lastName = parts[parts.length - 1];
+    for (const member of memberSet) {
+      const mParts = member.split(/\s+/).filter(Boolean);
+      if (mParts.length >= 2 && mParts[0] === firstName && mParts[mParts.length - 1] === lastName) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 // ─── App Component ────────────────────────────────────────────────────────────
 
 function App() {
@@ -96,7 +128,7 @@ function App() {
       const memberSet = new Set(data.hbaMembers || []);
       const friendsWithHba = data.friends.map(f => ({
         ...f,
-        hbaMember: memberSet.has(`${f.name}`.toLowerCase())
+        hbaMember: isHbaMember(memberSet, f.name)
       }));
       setFriends(friendsWithHba);
       setHbaMembers(memberSet);
@@ -199,7 +231,7 @@ function App() {
         // Mark HBA members
         const friendsWithHba = result.friends.map(f => ({
           ...f,
-          hbaMember: memberSet.has(`${f.name}`.toLowerCase())
+          hbaMember: isHbaMember(memberSet, f.name)
         }));
         setFriends(friendsWithHba);
 

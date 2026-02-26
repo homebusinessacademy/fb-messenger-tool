@@ -445,30 +445,47 @@ async function fetchHbaMembers() {
       })
     });
 
-    const json = await res.json();
+    const data = await res.json();
+    console.log('[FSI] HBA raw response:', JSON.stringify(data));
+
     // Parse the team list from the MCP result
     let members = [];
-    const content = json?.result?.content;
+    const content = data?.result?.content;
     if (content) {
       const textContent = Array.isArray(content)
         ? content.find(c => c.type === 'text')?.text
-        : null;
+        : (typeof content === 'string' ? content : null);
       if (textContent) {
         try {
           const parsed = JSON.parse(textContent);
           // Look for array of members — could be in various shapes
           const arr = Array.isArray(parsed) ? parsed : (parsed.members || parsed.team || parsed.data || []);
           members = arr.map(m => {
-            const name = m.name || `${m.first_name || ''} ${m.last_name || ''}`.trim();
-            return name.toLowerCase();
+            // Try all common name field combinations
+            let name = '';
+            if (m.name) {
+              name = m.name;
+            } else if (m.full_name) {
+              name = m.full_name;
+            } else if (m.firstName && m.lastName) {
+              name = `${m.firstName} ${m.lastName}`;
+            } else if (m.first_name && m.last_name) {
+              name = `${m.first_name} ${m.last_name}`;
+            } else if (m.first_name) {
+              name = m.first_name;
+            } else if (m.firstName) {
+              name = m.firstName;
+            }
+            return name.trim().toLowerCase();
           }).filter(Boolean);
-        } catch {
-          // Try to extract names from text
+        } catch (parseErr) {
+          console.error('[FSI] Failed to parse HBA members JSON:', parseErr);
           members = [];
         }
       }
     }
 
+    console.log('[FSI] HBA members found:', members.length, members.slice(0, 3));
     await setStorage({ hbaMembers: members });
     return { success: true, members };
   } catch (err) {
