@@ -219,7 +219,7 @@ function App() {
         fbTab = existingTabs[0];
       } else {
         fbTab = await new Promise(resolve =>
-          chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
+          chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: true }, resolve)
         );
         await waitForTabLoad(fbTab.id, 20000);
         await new Promise(resolve => setTimeout(resolve, 2000));
