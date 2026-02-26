@@ -61,29 +61,15 @@
     // Find the scrollable container — Facebook renders the friends list in a scrollable div,
     // not the window. Try multiple candidates.
     function getScrollContainer() {
-      // Most specific first — based on actual FB DOM (navigation[aria-label="All friends"])
-      const candidates = [
-        document.querySelector('[aria-label="All friends"]'),
-        document.querySelector('[data-pagelet="FriendsListPageContent"]'),
-        document.querySelector('[role="main"]'),
-        document.querySelector('[aria-label="Friends"]'),
-        // Find any ancestor of a friend link that is scrollable
-        (() => {
-          const link = document.querySelector('a[href*="facebook.com/"]');
-          if (!link) return null;
-          let el = link.parentElement;
-          while (el && el !== document.body) {
-            const style = window.getComputedStyle(el);
-            if (style.overflow === 'auto' || style.overflow === 'scroll' ||
-                style.overflowY === 'auto' || style.overflowY === 'scroll') {
-              return el;
-            }
-            el = el.parentElement;
-          }
-          return null;
-        })()
-      ];
-      return candidates.find(el => el !== null) || null;
+      // Proven approach: find first DIV with overflowY scroll/auto AND scrollHeight > clientHeight
+      // (tested live on FB friends page — the scrollable panel is not the nav itself but an ancestor div)
+      for (const el of document.querySelectorAll('div')) {
+        const s = window.getComputedStyle(el);
+        if (['auto', 'scroll'].includes(s.overflowY) && el.scrollHeight > el.clientHeight + 200) {
+          return el;
+        }
+      }
+      return null;
     }
 
     // Scroll loop to load all friends
@@ -170,38 +156,10 @@
       const img = link.querySelector('img');
       const profilePhotoUrl = img?.src || '';
 
-      // Extract name from aria-label — FB format: "John Smith John Smith 64 mutual friends More"
-      // or just "John Smith John Smith More"
-      let name = '';
-      const ariaLabel = link.getAttribute('aria-label') || '';
-      if (ariaLabel) {
-        // Remove trailing "More" and mutual friends count
-        const cleaned = ariaLabel
-          .replace(/\s*\d+\s+mutual friends/i, '')
-          .replace(/\s*More\s*$/i, '')
-          .trim();
-        // Name appears doubled — take first half
-        const half = Math.ceil(cleaned.length / 2);
-        const firstHalf = cleaned.substring(0, half).trim();
-        const secondHalf = cleaned.substring(half).trim();
-        // Verify it's actually doubled (both halves match approximately)
-        if (firstHalf && firstHalf === secondHalf) {
-          name = firstHalf;
-        } else if (firstHalf) {
-          name = firstHalf; // Use first half anyway
-        }
-      }
-
-      // Fallback: try span text
-      if (!name) {
-        const spans = Array.from(link.querySelectorAll('span'));
-        const candidates = spans
-          .map(s => s.textContent?.trim())
-          .filter(t => t && t.length >= 2 && t.length <= 60 &&
-                       !/^\d+$/.test(t) && !/mutual/i.test(t) &&
-                       !t.includes('·') && !t.includes('ago'));
-        name = candidates[0] || '';
-      }
+      // Extract name from textContent — proven format: "Dan Krencisz64 mutual friends"
+      // Strip the mutual friends count to get clean name
+      const rawText = link.textContent?.trim() || '';
+      let name = rawText.replace(/\d+\s+mutual.*$/i, '').trim();
 
       if (!name || name.length < 2 || name.length > 80) return;
 
