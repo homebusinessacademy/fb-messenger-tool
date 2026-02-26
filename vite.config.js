@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve, join } from 'path';
-import { cpSync, copyFileSync, mkdirSync, existsSync } from 'fs';
+import { cpSync, copyFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 
 // Custom plugin: copy extension static files into dist/ after build
 function copyExtensionFiles() {
@@ -52,6 +52,23 @@ function copyExtensionFiles() {
         mkdirSync(join(dist, 'assets'), { recursive: true });
         cpSync(join(root, 'assets'), join(dist, 'assets'), { recursive: true });
         console.log('[ext-copy] assets/ → dist/assets/');
+      }
+
+      // Fix popup.html for Chrome extension compatibility
+      const popupHtml = join(dist, 'popup/popup.html');
+      if (existsSync(popupHtml)) {
+        let html = readFileSync(popupHtml, 'utf8');
+        // Strip crossorigin attributes — Chrome extensions don't support them on local files
+        html = html.replace(/\s+crossorigin/g, '');
+        // Fix script path: change "../popup/popup.js" → "./popup.js" (same directory)
+        html = html.replace(/src="\.\.\/popup\/popup\.js"/g, 'src="./popup.js"');
+        // Replace type="module" with defer — MV3 extension popups can block module
+        // scripts; defer keeps the async-after-DOM-parse behavior without module scope
+        html = html.replace(/<script\s+type="module"/g, '<script defer');
+        // Fix CSS path similarly
+        html = html.replace(/href="\.\.\/popup\/popup\.css"/g, 'href="./popup.css"');
+        writeFileSync(popupHtml, html);
+        console.log('[ext-copy] Fixed popup.html: stripped crossorigin, fixed paths, removed type=module');
       }
     }
   };
