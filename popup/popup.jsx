@@ -326,6 +326,14 @@ function App() {
 
   if (screen === 'loading') return <LoadingScreen count={loadProgress} />;
 
+  async function handleReloadFriends() {
+    // Clear cached friends and re-scrape
+    await chrome.storage.local.remove(['friends', 'hbaMembers']);
+    setFriends([]);
+    setSelectedIds(new Set());
+    handleLoadFriends();
+  }
+
   if (screen === 'review') return (
     <ReviewScreen
       friends={filteredFriends}
@@ -342,6 +350,7 @@ function App() {
       onDeselectAll={deselectAll}
       onShowAllMessages={() => setShowAllMessages(v => !v)}
       onStart={handleStartCampaign}
+      onReload={handleReloadFriends}
     />
   );
 
@@ -464,7 +473,7 @@ function LoadingScreen({ count }) {
 
 // ─── Screen: Review & Select ──────────────────────────────────────────────────
 
-function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, searchQuery, showAllMessages, previewMessage, onSearch, onToggleFriend, onSelectAll, onDeselectAll, onShowAllMessages, onStart }) {
+function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, searchQuery, showAllMessages, previewMessage, onSearch, onToggleFriend, onSelectAll, onDeselectAll, onShowAllMessages, onStart, onReload }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 580, background: '#1a1a2e', overflow: 'hidden' }}>
       {/* Header */}
@@ -555,23 +564,41 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
           <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{selectedIds.size}</span> selected
           {estDays > 0 && <span> • Est. <span style={{ color: '#60a5fa' }}>~{estDays} days</span> to complete</span>}
         </p>
-        <button
-          onClick={onStart}
-          disabled={selectedIds.size === 0}
-          style={{
-            width: '100%',
-            padding: '12px',
-            background: selectedIds.size > 0 ? '#3b82f6' : '#2a2a4a',
-            color: selectedIds.size > 0 ? 'white' : '#4a4a6a',
-            border: 'none',
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 600,
-            cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed'
-          }}
-        >
-          Start Inviting →
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={onReload}
+            title="Reload friends list from Facebook"
+            style={{
+              padding: '12px 14px',
+              background: '#1e1e38',
+              color: '#94a3b8',
+              border: '1px solid #2a2a4a',
+              borderRadius: 8,
+              fontSize: 16,
+              cursor: 'pointer',
+              flexShrink: 0
+            }}
+          >
+            🔄
+          </button>
+          <button
+            onClick={onStart}
+            disabled={selectedIds.size === 0}
+            style={{
+              flex: 1,
+              padding: '12px',
+              background: selectedIds.size > 0 ? '#3b82f6' : '#2a2a4a',
+              color: selectedIds.size > 0 ? 'white' : '#4a4a6a',
+              border: 'none',
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed'
+            }}
+          >
+            Start Inviting →
+          </button>
+        </div>
       </div>
     </div>
   );
