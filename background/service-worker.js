@@ -435,7 +435,7 @@ async function fetchHbaMembers() {
       headers: {
         'Authorization': 'Bearer hba_f894f9b4071a7934e6e1c1e68297a9935731e70b8f20729741ffe8bfa8c35c02',
         'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream'
+        'Accept': 'application/json'
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
