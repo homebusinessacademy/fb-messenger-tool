@@ -141,72 +141,62 @@ async function sendToFriend(friendId, campaign) {
   const variationIndex = getRandomVariationIndex(lastVariation);
   const message = applyMessage(variationIndex, friend.firstName || friend.name.split(' ')[0]);
 
-  // Use facebook.com/messages (same session as friends scraping, more reliable than messenger.com)
-  const url = `https://www.facebook.com/messages/t/${friendId}`;
+  // Open messenger.com conversation in background
+  const url = `https://www.messenger.com/t/${friendId}`;
   const tab = await new Promise(resolve => chrome.tabs.create({ url, active: false }, resolve));
 
-  // Wait for page to fully load, then give React UI time to mount
+  // Wait for page to fully load, then give Messenger UI time to mount
   await waitForTabLoad(tab.id, 20000);
-  await sleep(3500);
+  await sleep(4000);
 
   try {
-    // Inject message sending directly — no content script dependency
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: async (msg) => {
-        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    const exec = (func, args) => chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args });
 
-        // Wait for Messenger input to appear (up to 12s)
-        let input = null;
-        for (let i = 0; i < 24; i++) {
-          input = document.querySelector('[role="textbox"][contenteditable="true"]') ||
-                  document.querySelector('div[contenteditable="true"][data-lexical-editor="true"]') ||
-                  document.querySelector('div[aria-label][contenteditable="true"]');
-          if (input) break;
-          await sleep(500);
-        }
+    // Step 1: Poll for input (up to 12s, in SW — no async needed inside executeScript)
+    const INPUT_SEL = '[role="textbox"][contenteditable="true"]';
+    let inputFound = false;
+    for (let i = 0; i < 24; i++) {
+      const r = await exec(() => !!document.querySelector('[role="textbox"][contenteditable="true"]'));
+      if (r[0]?.result) { inputFound = true; break; }
+      await sleep(500);
+    }
+    if (!inputFound) throw new Error('Input not found after 12s');
 
-        if (!input) return { success: false, error: 'Message input not found after 12s' };
-
-        // Check if user is actively using this tab (defer if focused)
-        if (document.hasFocus()) return { defer: true };
-
-        // Focus the input
-        input.focus();
-        await sleep(300);
-
-        // Use paste event — execCommand does NOT work on Facebook's Lexical editor
-        // ClipboardEvent paste is the only reliable way to insert text
-        const dt = new DataTransfer();
-        dt.setData('text/plain', msg);
-        input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-        await sleep(600);
-
-        // Verify text was inserted
-        const typed = (input.textContent || '').trim();
-        if (!typed) return { success: false, error: 'Paste did not insert text into input' };
-
-        // Send with Enter
-        input.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
-        }));
-        await sleep(1500);
-
-        // Confirm sent: input should be empty now
-        const cleared = (input.textContent || '').trim() === '';
-        return { success: cleared, error: cleared ? null : 'Input still has text after Enter — may not have sent' };
-      },
-      args: [message]
-    });
-
-    const result = results?.[0]?.result;
-
-    if (result?.defer) {
-      console.log('[FSI] User is on Messenger — deferring 15min.');
+    // Step 2: Check defer (user actively on this tab)
+    const focusCheck = await exec(() => document.hasFocus());
+    if (focusCheck[0]?.result) {
+      console.log('[FSI] User is on Messenger — deferring.');
       chrome.tabs.remove(tab.id).catch(() => {});
       scheduleAlarm(DEFER_MIN);
       return 'deferred';
     }
+
+    // Step 3: Paste message into input
+    const pasteOk = await exec((msg) => {
+      const input = document.querySelector('[role="textbox"][contenteditable="true"]');
+      if (!input) return false;
+      input.focus();
+      const dt = new DataTransfer();
+      dt.setData('text/plain', msg);
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      return (input.textContent || '').trim().length > 0;
+    }, [message]);
+    if (!pasteOk[0]?.result) throw new Error('Paste did not insert text');
+
+    await sleep(700);
+
+    // Step 4: Press Enter to send
+    await exec(() => {
+      const input = document.querySelector('[role="textbox"][contenteditable="true"]');
+      if (!input) return;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    });
+
+    await sleep(1500);
+
+    // Step 5: Verify sent (input should be empty)
+    const cleared = await exec(() => (document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent || '').trim() === '');
+    const result = { success: !!cleared[0]?.result, error: cleared[0]?.result ? null : 'Input not cleared after Enter' };
 
     if (result?.success) {
       const now = new Date().toISOString();
