@@ -107,7 +107,15 @@ function App() {
   }, []);
 
   async function initFromStorage() {
-    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign']);
+    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress']);
+
+    // Resume scrape progress display if SW is mid-scrape
+    if (data.scrapeStatus === 'running') {
+      setScreen('loading');
+      setLoadProgress(data.scrapeProgress || 0);
+      startScrapePoller();
+      return;
+    }
 
     // Check for active campaign first
     if (data.campaign) {
@@ -202,98 +210,39 @@ function App() {
     });
   }
 
+  // Poll storage until SW scrape completes
+  function startScrapePoller() {
+    const poll = setInterval(async () => {
+      try {
+        const data = await getFromStorage(['scrapeProgress', 'scrapeStatus', 'scrapeError', 'friends', 'hbaMembers', 'hasSeenIntro']);
+        if (data.scrapeProgress) setLoadProgress(data.scrapeProgress);
+
+        if (data.scrapeStatus === 'done') {
+          clearInterval(poll);
+          const memberSet = new Set(data.hbaMembers || []);
+          const friendsWithHba = (data.friends || []).map(f => ({ ...f, hbaMember: isHbaMember(memberSet, f.name) }));
+          setFriends(friendsWithHba);
+          setHbaMembers(memberSet);
+          const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
+          setSelectedIds(nonHba);
+          setScreen(data.hasSeenIntro ? 'review' : 'intro');
+        }
+
+        if (data.scrapeStatus === 'error') {
+          clearInterval(poll);
+          alert(`Failed to load friends: ${data.scrapeError}\n\nMake sure you're logged into Facebook and try again.`);
+          setScreen('welcome');
+        }
+      } catch (e) { console.warn('Scrape poll error:', e); }
+    }, 800);
+  }
+
   async function handleLoadFriends() {
     setScreen('loading');
     setLoadProgress(0);
-
-    try {
-      // Fetch HBA members in background
-      const hbaResult = await sendToSW('FETCH_HBA_MEMBERS').catch(() => ({ members: [] }));
-      const memberSet = new Set(hbaResult.members || []);
-      setHbaMembers(memberSet);
-
-      // Use existing Facebook tab if on friends page, else open new one
-      const existingTabs = await new Promise(resolve =>
-        chrome.tabs.query({ url: '*://*.facebook.com/friends*' }, resolve)
-      );
-      let fbTab;
-      if (existingTabs.length > 0) {
-        fbTab = existingTabs[0];
-      } else {
-        fbTab = await new Promise(resolve =>
-          chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: true }, resolve)
-        );
-        await waitForTabLoad(fbTab.id, 20000);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-
-      const tabId = fbTab.id;
-
-      // SCROLL LOOP — direct executeScript, no content script needed
-      const scrollOnce = () => {
-        const el = Array.from(document.querySelectorAll('div')).find(e => {
-          const s = getComputedStyle(e);
-          return ['auto','scroll'].includes(s.overflowY) && e.scrollHeight > e.clientHeight + 200;
-        });
-        if (el) el.scrollTop += 1200;
-        return document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]').length;
-      };
-
-      let lastCount = 0, stableRounds = 0;
-      for (let i = 0; i < 80; i++) {
-        const res = await chrome.scripting.executeScript({ target: { tabId }, func: scrollOnce });
-        const count = res[0]?.result || 0;
-        setLoadProgress(count);
-        if (count === lastCount) { stableRounds++; } else { stableRounds = 0; }
-        lastCount = count;
-        if (stableRounds >= 10 && count > 0) break;
-        await new Promise(resolve => setTimeout(resolve, 1200));
-      }
-
-      // EXTRACT — pull all friend data directly
-      const extractFriends = () => {
-        return Array.from(
-          document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]')
-        ).map(l => {
-          const raw = l.textContent?.trim() || '';
-          const name = raw.replace(/\d+\s+mutual.*$/i, '').trim();
-          const href = l.href || '';
-          const userId = href.includes('profile.php')
-            ? href.match(/id=(\d+)/)?.[1]
-            : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
-          const firstName = name.split(' ')[0] || '';
-          const svgImg = l.querySelector('svg image');
-          const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
-          return { id: userId, name, firstName, profilePhotoUrl, hbaMember: false };
-        }).filter(f => f.name && f.id && f.name.length > 1);
-      };
-
-      const extractRes = await chrome.scripting.executeScript({ target: { tabId }, func: extractFriends });
-      const rawFriends = extractRes[0]?.result || [];
-
-      // Close tab if we opened it
-      if (existingTabs.length === 0) chrome.tabs.remove(tabId).catch(() => {});
-
-      if (rawFriends.length === 0) throw new Error('No friends found — make sure you\'re on the friends page');
-
-      // Mark HBA members
-      const friendsWithHba = rawFriends.map(f => ({
-        ...f,
-        hbaMember: isHbaMember(memberSet, f.name)
-      }));
-
-      await chrome.storage.local.set({ friends: friendsWithHba });
-      setFriends(friendsWithHba);
-      const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
-      setSelectedIds(nonHba);
-      const seenData = await getFromStorage(['hasSeenIntro']);
-      setScreen(seenData.hasSeenIntro ? 'review' : 'intro');
-
-    } catch (err) {
-      console.error('Load friends failed:', err);
-      alert(`Failed to load friends: ${err.message}\n\nMake sure you're logged into Facebook and try again.`);
-      setScreen('welcome');
-    }
+    // Trigger scraping in SW — it runs independently, popup can close/reopen freely
+    sendToSW('START_SCRAPE').catch(() => {});
+    startScrapePoller();
   }
 
   // ─── Campaign Actions ──────────────────────────────────────────────────────
@@ -381,8 +330,7 @@ function App() {
   if (screen === 'intro') return <IntroScreen onContinue={handleIntroComplete} />;
 
   async function handleReloadFriends() {
-    // Clear cached friends and re-scrape
-    await chrome.storage.local.remove(['friends', 'hbaMembers']);
+    await chrome.storage.local.remove(['friends', 'hbaMembers', 'scrapeStatus', 'scrapeProgress', 'scrapeError']);
     setFriends([]);
     setSelectedIds(new Set());
     handleLoadFriends();

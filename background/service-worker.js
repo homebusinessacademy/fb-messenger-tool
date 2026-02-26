@@ -367,7 +367,107 @@ chrome.alarms.onAlarm.addListener(alarm => {
   }
 });
 
+// ─── Friend Scraping (runs in SW so popup stays open) ────────────────────────
+
+function isHbaMemberSW(memberSet, fullName) {
+  if (!fullName || memberSet.size === 0) return false;
+  const n = fullName.toLowerCase().trim();
+  if (memberSet.has(n)) return true;
+  const parts = n.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const fl = `${parts[0]} ${parts[parts.length - 1]}`;
+    if (memberSet.has(fl)) return true;
+    for (const m of memberSet) {
+      const mp = m.split(/\s+/).filter(Boolean);
+      if (mp.length >= 2 && mp[0] === parts[0] && mp[mp.length - 1] === parts[parts.length - 1]) return true;
+    }
+  }
+  return false;
+}
+
+async function handleScrapeFriends() {
+  try {
+    await setStorage({ scrapeProgress: 0, scrapeStatus: 'running', scrapeError: null });
+
+    // Find existing friends tab or open a new one
+    const existingTabs = await new Promise(resolve =>
+      chrome.tabs.query({ url: '*://*.facebook.com/friends*' }, resolve)
+    );
+    let tabId, createdTab = false;
+    if (existingTabs.length > 0) {
+      tabId = existingTabs[0].id;
+    } else {
+      const tab = await new Promise(resolve =>
+        chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: true }, resolve)
+      );
+      tabId = tab.id;
+      createdTab = true;
+      await waitForTabLoad(tabId, 20000);
+      await sleep(2000);
+    }
+
+    // Scroll loop — inline func, no outer scope refs
+    let lastCount = 0, stableRounds = 0;
+    for (let i = 0; i < 80; i++) {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const el = Array.from(document.querySelectorAll('div')).find(e => {
+            const s = getComputedStyle(e);
+            return ['auto','scroll'].includes(s.overflowY) && e.scrollHeight > e.clientHeight + 200;
+          });
+          if (el) el.scrollTop += 1200;
+          return document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]').length;
+        }
+      });
+      const count = res[0]?.result || 0;
+      await setStorage({ scrapeProgress: count });
+      if (count !== lastCount) { stableRounds = 0; lastCount = count; } else { stableRounds++; }
+      if (stableRounds >= 10 && count > 0) break;
+      await sleep(1200);
+    }
+
+    // Extract all friend data
+    const extractRes = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => Array.from(
+        document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]')
+      ).map(l => {
+        const name = (l.textContent || '').trim().replace(/\d+\s+mutual.*$/i, '').trim();
+        const href = l.href || '';
+        const userId = href.includes('profile.php')
+          ? href.match(/id=(\d+)/)?.[1]
+          : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
+        const svgImg = l.querySelector('svg image');
+        const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
+        return { id: userId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
+      }).filter(f => f.name && f.id && f.name.length > 1)
+    });
+
+    const rawFriends = extractRes[0]?.result || [];
+    if (createdTab) chrome.tabs.remove(tabId).catch(() => {});
+    if (rawFriends.length === 0) throw new Error("No friends found — make sure you're logged into Facebook");
+
+    // Fetch HBA members and mark
+    const hbaResult = await fetchHbaMembers();
+    const memberSet = new Set(hbaResult.members || []);
+    const friendsWithHba = rawFriends.map(f => ({ ...f, hbaMember: isHbaMemberSW(memberSet, f.name) }));
+
+    await setStorage({ friends: friendsWithHba, hbaMembers: [...memberSet], scrapeStatus: 'done' });
+    console.log(`[FSI] Scrape done: ${friendsWithHba.length} friends`);
+    return { success: true };
+  } catch (err) {
+    console.error('[FSI] Scrape failed:', err.message);
+    await setStorage({ scrapeStatus: 'error', scrapeError: err.message });
+    return { success: false, error: err.message };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'START_SCRAPE') {
+    handleScrapeFriends().then(sendResponse);
+    return true;
+  }
   if (message.type === 'START_CAMPAIGN') {
     handleStartCampaign(message.payload).then(sendResponse);
     return true;
