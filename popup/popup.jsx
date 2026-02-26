@@ -205,58 +205,85 @@ function App() {
     setLoadProgress(0);
 
     try {
-      // Fetch HBA members in the background
+      // Fetch HBA members in background
       const hbaResult = await sendToSW('FETCH_HBA_MEMBERS').catch(() => ({ members: [] }));
       const memberSet = new Set(hbaResult.members || []);
       setHbaMembers(memberSet);
 
-      // Open a NEW tab for scraping
-      const fbTab = await new Promise(resolve =>
-        chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
+      // Use existing Facebook tab if on friends page, else open new one
+      const existingTabs = await new Promise(resolve =>
+        chrome.tabs.query({ url: '*://*.facebook.com/friends*' }, resolve)
       );
-
-      // Wait for tab to fully load
-      await waitForTabLoad(fbTab.id, 25000);
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Force-inject the content script (more reliable than auto-injection in background tabs)
-      try {
-        // Reset init flag first so script runs fresh
-        await chrome.scripting.executeScript({
-          target: { tabId: fbTab.id },
-          func: () => { window.__fsiInitialized = false; }
-        });
-        await chrome.scripting.executeScript({
-          target: { tabId: fbTab.id },
-          files: ['content/facebook.js']
-        });
-        // Let the script initialize
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      } catch (injectErr) {
-        console.warn('[FSI] Script injection failed, trying anyway:', injectErr.message);
-      }
-
-      // Trigger scraping with retry logic
-      const result = await sendToTabWithRetry(fbTab.id, { type: 'SCRAPE_FRIENDS' }, 10, 2000)
-        .finally(() => {
-          chrome.tabs.remove(fbTab.id).catch(() => {});
-        });
-
-      if (result?.friends) {
-        // Mark HBA members
-        const friendsWithHba = result.friends.map(f => ({
-          ...f,
-          hbaMember: isHbaMember(memberSet, f.name)
-        }));
-        setFriends(friendsWithHba);
-
-        // Pre-select non-HBA members
-        const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
-        setSelectedIds(nonHba);
-        setScreen('review');
+      let fbTab;
+      if (existingTabs.length > 0) {
+        fbTab = existingTabs[0];
       } else {
-        throw new Error('No friends returned');
+        fbTab = await new Promise(resolve =>
+          chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
+        );
+        await waitForTabLoad(fbTab.id, 20000);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
+
+      const tabId = fbTab.id;
+
+      // SCROLL LOOP — direct executeScript, no content script needed
+      const scrollOnce = () => {
+        const el = Array.from(document.querySelectorAll('div')).find(e => {
+          const s = getComputedStyle(e);
+          return ['auto','scroll'].includes(s.overflowY) && e.scrollHeight > e.clientHeight + 200;
+        });
+        if (el) el.scrollTop += 1200;
+        return document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]').length;
+      };
+
+      let lastCount = 0, stableRounds = 0;
+      for (let i = 0; i < 80; i++) {
+        const res = await chrome.scripting.executeScript({ target: { tabId }, func: scrollOnce });
+        const count = res[0]?.result || 0;
+        setLoadProgress(count);
+        if (count === lastCount) { stableRounds++; } else { stableRounds = 0; }
+        lastCount = count;
+        if (stableRounds >= 10 && count > 0) break;
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      }
+
+      // EXTRACT — pull all friend data directly
+      const extractFriends = () => {
+        return Array.from(
+          document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]')
+        ).map(l => {
+          const raw = l.textContent?.trim() || '';
+          const name = raw.replace(/\d+\s+mutual.*$/i, '').trim();
+          const href = l.href || '';
+          const userId = href.includes('profile.php')
+            ? href.match(/id=(\d+)/)?.[1]
+            : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
+          const firstName = name.split(' ')[0] || '';
+          return { id: userId, name, firstName, profilePhotoUrl: '', hbaMember: false };
+        }).filter(f => f.name && f.id && f.name.length > 1);
+      };
+
+      const extractRes = await chrome.scripting.executeScript({ target: { tabId }, func: extractFriends });
+      const rawFriends = extractRes[0]?.result || [];
+
+      // Close tab if we opened it
+      if (existingTabs.length === 0) chrome.tabs.remove(tabId).catch(() => {});
+
+      if (rawFriends.length === 0) throw new Error('No friends found — make sure you\'re on the friends page');
+
+      // Mark HBA members
+      const friendsWithHba = rawFriends.map(f => ({
+        ...f,
+        hbaMember: isHbaMember(memberSet, f.name)
+      }));
+
+      await chrome.storage.local.set({ friends: friendsWithHba });
+      setFriends(friendsWithHba);
+      const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
+      setSelectedIds(nonHba);
+      setScreen('review');
+
     } catch (err) {
       console.error('Load friends failed:', err);
       alert(`Failed to load friends: ${err.message}\n\nMake sure you're logged into Facebook and try again.`);
