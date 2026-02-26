@@ -210,20 +210,35 @@ function App() {
       const memberSet = new Set(hbaResult.members || []);
       setHbaMembers(memberSet);
 
-      // Always open a NEW background tab for scraping — don't hijack current FB tab
+      // Open a NEW tab for scraping
       const fbTab = await new Promise(resolve =>
         chrome.tabs.create({ url: 'https://www.facebook.com/friends/list', active: false }, resolve)
       );
 
       // Wait for tab to fully load
-      await waitForTabLoad(fbTab.id, 20000);
-      // Extra buffer for content script to initialize
+      await waitForTabLoad(fbTab.id, 25000);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
+      // Force-inject the content script (more reliable than auto-injection in background tabs)
+      try {
+        // Reset init flag first so script runs fresh
+        await chrome.scripting.executeScript({
+          target: { tabId: fbTab.id },
+          func: () => { window.__fsiInitialized = false; }
+        });
+        await chrome.scripting.executeScript({
+          target: { tabId: fbTab.id },
+          files: ['content/facebook.js']
+        });
+        // Let the script initialize
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } catch (injectErr) {
+        console.warn('[FSI] Script injection failed, trying anyway:', injectErr.message);
+      }
+
       // Trigger scraping with retry logic
-      const result = await sendToTabWithRetry(fbTab.id, { type: 'SCRAPE_FRIENDS' }, 8, 2000)
+      const result = await sendToTabWithRetry(fbTab.id, { type: 'SCRAPE_FRIENDS' }, 10, 2000)
         .finally(() => {
-          // Always close the scraping tab when done
           chrome.tabs.remove(fbTab.id).catch(() => {});
         });
 
