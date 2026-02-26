@@ -183,18 +183,43 @@ async function sendToFriend(friendId, campaign) {
     // Note: Removed defer check — it was broken (we open tab as active, so hasFocus always true)
     // User chose to start campaign; we'll send. If they're chatting, they can pause.
 
-    // Step 2: Paste message into input
-    const pasteOk = await exec((msg) => {
+    // Step 2: Insert message into input (multiple fallback strategies)
+    const insertOk = await exec((msg) => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
-      if (!input) return false;
+      if (!input) return { ok: false, method: 'none', error: 'input not found' };
       input.focus();
-      const dt = new DataTransfer();
-      dt.setData('text/plain', msg);
-      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-      return (input.textContent || '').trim().length > 0;
+
+      // Strategy 1: execCommand (works in some editors)
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+      const execOk = document.execCommand('insertText', false, msg);
+      if (execOk && (input.textContent || '').trim().length > 0) {
+        return { ok: true, method: 'execCommand' };
+      }
+
+      // Strategy 2: Direct innerHTML + input event (for Lexical)
+      // Lexical uses <p><br></p> structure, we need to replace content properly
+      const p = input.querySelector('p') || input;
+      p.innerHTML = msg;
+      input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: msg }));
+      if ((input.textContent || '').trim().length > 0) {
+        return { ok: true, method: 'innerHTML+input' };
+      }
+
+      // Strategy 3: textContent + input event
+      input.textContent = msg;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: msg }));
+      if ((input.textContent || '').trim().length > 0) {
+        return { ok: true, method: 'textContent+input' };
+      }
+
+      return { ok: false, method: 'all failed', error: 'No strategy inserted text' };
     }, [message]);
-    if (!pasteOk[0]?.result) throw new Error('Paste did not insert text into input');
-    console.log('[FSI] Message pasted, pressing Enter...');
+
+    const insertResult = insertOk[0]?.result;
+    if (!insertResult?.ok) throw new Error(`Text insert failed: ${insertResult?.error || 'unknown'}`);
+    console.log(`[FSI] Message inserted via ${insertResult.method}, pressing Enter...`);
 
     await sleep(700);
 
