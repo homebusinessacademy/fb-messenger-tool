@@ -141,9 +141,8 @@ async function sendToFriend(friendId, campaign) {
   const variationIndex = getRandomVariationIndex(lastVariation);
   const message = applyMessage(variationIndex, friend.firstName || friend.name.split(' ')[0]);
 
-  // Open messenger.com conversation — active:true so React/Lexical UI fully mounts
-  // (background tabs don't initialize Messenger's editor reliably)
-  const url = `https://www.messenger.com/t/${friendId}`;
+  // Open facebook.com/messages — stays in Chrome (messenger.com triggers desktop app)
+  const url = `https://www.facebook.com/messages/t/${friendId}`;
   console.log(`[FSI] Opening tab: ${url}`);
   const tab = await new Promise(resolve => chrome.tabs.create({ url, active: true }, resolve));
 
