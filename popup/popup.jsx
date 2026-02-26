@@ -108,6 +108,9 @@ function App() {
 
   async function initFromStorage() {
     const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress']);
+    
+    // Clear the badge when popup opens (user has seen the notification)
+    sendToSW('CLEAR_BADGE').catch(() => {});
 
     // Resume scrape progress display if SW is mid-scrape
     if (data.scrapeStatus === 'running') {

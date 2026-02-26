@@ -270,6 +270,12 @@ async function sendToFriend(friendId, campaign) {
       };
       campaign.sentToday = (campaign.sentToday || 0) + 1;
       campaign.lastVariationIndex = variationIndex;
+      
+      // Update badge with today's progress
+      const totalSent = Object.values(campaign.sendRecords).filter(r => r.status === 'sent').length;
+      chrome.action.setBadgeText({ text: `${totalSent}` });
+      chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
+      
       console.log(`[FSI] ✅ Sent to ${friend.name}`);
       chrome.tabs.remove(tab.id).catch(() => {});
       return true;
@@ -349,6 +355,8 @@ async function handleSendAlarm() {
     // All done
     campaign.status = 'complete';
     await setStorage({ campaign });
+    chrome.action.setBadgeText({ text: '🎉' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
     console.log('[FSI] Campaign complete!');
     return;
   }
@@ -377,6 +385,8 @@ async function handleSendAlarm() {
   if (isCampaignComplete(campaign)) {
     campaign.status = 'complete';
     await setStorage({ campaign });
+    chrome.action.setBadgeText({ text: '🎉' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
     console.log('[FSI] Campaign complete!');
     return;
   }
@@ -445,6 +455,10 @@ function isHbaMemberSW(memberSet, fullName) {
 async function handleScrapeFriends() {
   try {
     await setStorage({ scrapeProgress: 0, scrapeStatus: 'running', scrapeError: null });
+    
+    // Show loading badge
+    chrome.action.setBadgeText({ text: '...' });
+    chrome.action.setBadgeBackgroundColor({ color: '#2196F3' });
 
     // Find existing friends tab or open a new one
     const existingTabs = await new Promise(resolve =>
@@ -479,6 +493,10 @@ async function handleScrapeFriends() {
       });
       const count = res[0]?.result || 0;
       await setStorage({ scrapeProgress: count });
+      
+      // Update badge with current count
+      chrome.action.setBadgeText({ text: count > 0 ? String(count) : '...' });
+      
       if (count !== lastCount) { stableRounds = 0; lastCount = count; } else { stableRounds++; }
       if (stableRounds >= 10 && count > 0) break;
       await sleep(1200);
@@ -502,7 +520,6 @@ async function handleScrapeFriends() {
     });
 
     const rawFriends = extractRes[0]?.result || [];
-    if (createdTab) chrome.tabs.remove(tabId).catch(() => {});
     if (rawFriends.length === 0) throw new Error("No friends found — make sure you're logged into Facebook");
 
     // Fetch HBA members and mark
@@ -512,10 +529,81 @@ async function handleScrapeFriends() {
 
     await setStorage({ friends: friendsWithHba, hbaMembers: [...memberSet], scrapeStatus: 'done' });
     console.log(`[FSI] Scrape done: ${friendsWithHba.length} friends`);
+    
+    // Update badge to show success
+    chrome.action.setBadgeText({ text: '✓' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
+    
+    // Inject overlay into the page instead of closing
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (friendCount) => {
+        // Remove any existing overlay
+        const existing = document.getElementById('fsi-overlay');
+        if (existing) existing.remove();
+        
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'fsi-overlay';
+        overlay.innerHTML = `
+          <div style="
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px 32px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            z-index: 999999;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 320px;
+            animation: slideIn 0.3s ease-out;
+          ">
+            <style>
+              @keyframes slideIn {
+                from { transform: translateX(100px); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+              }
+            </style>
+            <div style="font-size: 32px; margin-bottom: 8px;">🎉</div>
+            <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">
+              ${friendCount} friends loaded!
+            </div>
+            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 16px;">
+              Click the <strong>Fast Start Inviter</strong> extension icon to select who to invite.
+            </div>
+            <button id="fsi-overlay-close" style="
+              background: rgba(255,255,255,0.2);
+              border: none;
+              color: white;
+              padding: 8px 16px;
+              border-radius: 8px;
+              cursor: pointer;
+              font-size: 14px;
+            ">Got it!</button>
+          </div>
+        `;
+        document.body.appendChild(overlay);
+        
+        // Close button handler
+        document.getElementById('fsi-overlay-close').onclick = () => overlay.remove();
+        
+        // Auto-dismiss after 30 seconds
+        setTimeout(() => overlay.remove(), 30000);
+      },
+      args: [friendsWithHba.length]
+    });
+    
     return { success: true };
   } catch (err) {
     console.error('[FSI] Scrape failed:', err.message);
     await setStorage({ scrapeStatus: 'error', scrapeError: err.message });
+    
+    // Show error on badge
+    chrome.action.setBadgeText({ text: '!' });
+    chrome.action.setBadgeBackgroundColor({ color: '#f44336' });
+    
     return { success: false, error: err.message };
   }
 }
@@ -547,6 +635,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'FETCH_HBA_MEMBERS') {
     fetchHbaMembers().then(sendResponse);
+    return true;
+  }
+  if (message.type === 'CLEAR_BADGE') {
+    chrome.action.setBadgeText({ text: '' });
+    sendResponse({ success: true });
     return true;
   }
 });
