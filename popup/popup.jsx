@@ -284,7 +284,8 @@ function App() {
       setFriends(friendsWithHba);
       const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
       setSelectedIds(nonHba);
-      setScreen('review');
+      const seenData = await getFromStorage(['hasSeenIntro']);
+      setScreen(seenData.hasSeenIntro ? 'review' : 'intro');
 
     } catch (err) {
       console.error('Load friends failed:', err);
@@ -369,6 +370,13 @@ function App() {
   if (screen === 'welcome') return <WelcomeScreen onLoad={handleLoadFriends} />;
 
   if (screen === 'loading') return <LoadingScreen count={loadProgress} />;
+
+  async function handleIntroComplete() {
+    await chrome.storage.local.set({ hasSeenIntro: true });
+    setScreen('review');
+  }
+
+  if (screen === 'intro') return <IntroScreen onContinue={handleIntroComplete} />;
 
   async function handleReloadFriends() {
     // Clear cached friends and re-scrape
@@ -511,6 +519,65 @@ function LoadingScreen({ count }) {
       <p style={{ fontSize: 14, color: '#94a3b8' }}>
         {count > 0 ? `${count} friends found so far...` : 'Connecting to Facebook...'}
       </p>
+    </div>
+  );
+}
+
+// ─── Screen: How It Works (Intro) ────────────────────────────────────────────
+
+function IntroScreen({ onContinue }) {
+  const items = [
+    { icon: '⏰', title: 'Runs automatically in the background', body: 'After you hit Start, the extension sends up to 10 invitations per day on its own — no daily action needed from you.' },
+    { icon: '💻', title: 'Keep Chrome open', body: 'Chrome needs to stay open (minimized is totally fine) for messages to send. If Chrome is closed or your computer is off, it\'ll pick up the next day.' },
+    { icon: '👁️', title: 'You\'ll see a tab briefly flash', body: 'When sending a message, a Facebook tab will open in the background for a few seconds then close. That\'s completely normal — it\'s the extension doing its thing.' },
+    { icon: '🚫', title: 'Don\'t blast messages yourself', body: 'While the campaign is running, avoid sending a large volume of messages manually. Keep things natural so Facebook doesn\'t flag your account.' },
+    { icon: '⏸️', title: 'Pause or resume anytime', body: 'Open this extension popup anytime to check progress, pause, or resume. You\'re always in control.' },
+    { icon: '📅', title: 'Takes about 30 days', body: 'At 10/day it takes roughly 30 days to reach your full friends list. Set it, forget it, and let it work.' },
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 580, background: '#1a1a2e', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ padding: '20px 20px 0', flexShrink: 0 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#f1f5f9', marginBottom: 4 }}>
+          🚀 Before You Start
+        </h2>
+        <p style={{ fontSize: 12, color: '#64748b', marginBottom: 0 }}>
+          Read this once so your campaign runs smoothly.
+        </p>
+      </div>
+
+      {/* Scrollable content */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', minHeight: 0 }}>
+        {items.map((item, i) => (
+          <div key={i} style={{
+            display: 'flex', gap: 12, marginBottom: 16,
+            background: '#0f0f23', border: '1px solid #2a2a4a',
+            borderRadius: 10, padding: '12px 14px'
+          }}>
+            <div style={{ fontSize: 22, flexShrink: 0, marginTop: 1 }}>{item.icon}</div>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>{item.title}</p>
+              <p style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.5 }}>{item.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer CTA */}
+      <div style={{ padding: '12px 20px 16px', background: '#0f0f23', borderTop: '1px solid #2a2a4a', flexShrink: 0 }}>
+        <button
+          onClick={onContinue}
+          style={{
+            width: '100%', padding: '13px',
+            background: '#3b82f6', color: 'white',
+            border: 'none', borderRadius: 8,
+            fontSize: 14, fontWeight: 600, cursor: 'pointer'
+          }}
+        >
+          Got It — Show Me My Friends →
+        </button>
+      </div>
     </div>
   );
 }
