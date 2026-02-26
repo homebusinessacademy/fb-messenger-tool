@@ -683,7 +683,7 @@ function FriendRow({ friend, checked, onToggle }) {
           border: '1px solid #065f46', borderRadius: 4,
           padding: '2px 6px', flexShrink: 0
         }}>
-          Already In
+          Already In HBA
         </span>
       )}
 
