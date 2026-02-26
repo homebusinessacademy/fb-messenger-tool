@@ -428,68 +428,59 @@ async function getStatus() {
   };
 }
 
+// Call HBA MCP API — handles SSE response format
+async function callHbaMcp(toolName, args = {}) {
+  const res = await fetch('https://thehba.app/api/mcp', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer hba_f894f9b4071a7934e6e1c1e68297a9935731e70b8f20729741ffe8bfa8c35c02',
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream'  // API requires BOTH
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: toolName, arguments: args }
+    })
+  });
+  // Response is SSE format: "event: message\ndata: {...}\n\n"
+  const text = await res.text();
+  const dataLine = text.split('\n').find(l => l.startsWith('data: '));
+  if (!dataLine) throw new Error('No data line in SSE response');
+  const envelope = JSON.parse(dataLine.substring(6));
+  const textContent = envelope?.result?.content?.find?.(c => c.type === 'text')?.text;
+  if (!textContent) throw new Error('No text content in MCP response');
+  return JSON.parse(textContent);
+}
+
 async function fetchHbaMembers() {
   try {
-    const res = await fetch('https://thehba.app/api/mcp', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer hba_f894f9b4071a7934e6e1c1e68297a9935731e70b8f20729741ffe8bfa8c35c02',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name: 'get_team', arguments: {} }
-      })
-    });
+    // get_active_customers returns ALL HBA customers (1463+), paginated
+    // Fetch all pages with limit=500 (3 requests max)
+    const allMembers = [];
+    let offset = 0;
+    const limit = 500;
 
-    const data = await res.json();
-    console.log('[FSI] HBA raw response:', JSON.stringify(data));
+    while (true) {
+      const data = await callHbaMcp('get_active_customers', { limit, offset });
+      const customers = data.customers || [];
+      const total = parseInt(data.totalCount || '0');
 
-    // Parse the team list from the MCP result
-    let members = [];
-    const content = data?.result?.content;
-    if (content) {
-      const textContent = Array.isArray(content)
-        ? content.find(c => c.type === 'text')?.text
-        : (typeof content === 'string' ? content : null);
-      if (textContent) {
-        try {
-          const parsed = JSON.parse(textContent);
-          // Look for array of members — could be in various shapes
-          const arr = Array.isArray(parsed) ? parsed : (parsed.members || parsed.team || parsed.data || []);
-          members = arr.map(m => {
-            // Try all common name field combinations
-            let name = '';
-            if (m.name) {
-              name = m.name;
-            } else if (m.full_name) {
-              name = m.full_name;
-            } else if (m.firstName && m.lastName) {
-              name = `${m.firstName} ${m.lastName}`;
-            } else if (m.first_name && m.last_name) {
-              name = `${m.first_name} ${m.last_name}`;
-            } else if (m.first_name) {
-              name = m.first_name;
-            } else if (m.firstName) {
-              name = m.firstName;
-            }
-            return name.trim().toLowerCase();
-          }).filter(Boolean);
-        } catch (parseErr) {
-          console.error('[FSI] Failed to parse HBA members JSON:', parseErr);
-          members = [];
-        }
+      for (const c of customers) {
+        const name = `${c.firstName || ''} ${c.lastName || ''}`.trim().toLowerCase();
+        if (name) allMembers.push(name);
       }
+
+      offset += customers.length;
+      console.log(`[FSI] HBA members loaded: ${allMembers.length} / ${total}`);
+
+      if (customers.length === 0 || allMembers.length >= total) break;
     }
 
-    console.log('[FSI] HBA members found:', members.length, members.slice(0, 3));
-    await setStorage({ hbaMembers: members });
-    return { success: true, members };
+    console.log('[FSI] Total HBA members:', allMembers.length, '| Sample:', allMembers.slice(0, 5));
+    await setStorage({ hbaMembers: allMembers });
+    return { success: true, members: allMembers };
   } catch (err) {
     console.error('[FSI] Failed to fetch HBA members:', err);
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, members: [] };
   }
 }
