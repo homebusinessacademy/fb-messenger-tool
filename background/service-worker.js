@@ -274,12 +274,17 @@ async function sendToFriend(friendId, campaign) {
       // Save immediately so we don't lose the record
       await setStorage({ campaign });
       
+      // DEBUG: Verify the save worked
+      const verify = await getStorage(['campaign']);
+      const savedSent = Object.values(verify.campaign?.sendRecords || {}).filter(r => r.status === 'sent').length;
+      console.log(`[FSI] DEBUG: Saved campaign, sendRecords has ${savedSent} sent (friendId: ${friendId})`);
+      
       // Update badge with today's progress
       const totalSent = Object.values(campaign.sendRecords).filter(r => r.status === 'sent').length;
       chrome.action.setBadgeText({ text: `${totalSent}` });
       chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
       
-      console.log(`[FSI] ✅ Sent to ${friend.name}`);
+      console.log(`[FSI] ✅ Sent to ${friend.name}, total sent: ${totalSent}`);
       chrome.tabs.remove(tab.id).catch(() => {});
       return true;
     }
@@ -722,6 +727,11 @@ async function getStatus() {
   const total = campaign.selectedFriendIds?.length || 0;
   const sent = Object.values(campaign.sendRecords || {}).filter(r => r.status === 'sent').length;
   const failed = Object.values(campaign.sendRecords || {}).filter(r => r.status === 'failed').length;
+  
+  // DEBUG: Log what we're returning
+  console.log(`[FSI] getStatus: total=${total}, sent=${sent}, failed=${failed}, status=${campaign.status}`);
+  console.log(`[FSI] getStatus: sendRecords keys:`, Object.keys(campaign.sendRecords || {}));
+  console.log(`[FSI] getStatus: sendRecords statuses:`, Object.values(campaign.sendRecords || {}).map(r => r.status));
 
   // Get next alarm
   let nextAlarmMinutes = null;
