@@ -47,7 +47,7 @@ const WINDOW_START_HOUR = 9;   // 9am
 const WINDOW_END_HOUR = 20;    // 8pm
 
 // ⚠️ TEST MODE — set TEST_MODE = false before going live
-const TEST_MODE = false;
+const TEST_MODE = true; // ⚠️ flip to false before going live
 const MIN_GAP_MIN = TEST_MODE ? 1   : 30;
 const MAX_GAP_MIN = TEST_MODE ? 2   : 60;
 const DEFER_MIN   = TEST_MODE ? 1   : 15;
@@ -114,8 +114,22 @@ async function getNextPendingFriend(campaign) {
   return null;
 }
 
+// Wait for a tab to finish loading
+function waitForTabLoad(tabId, timeoutMs = 20000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    function listener(id, info) {
+      if (id === tabId && info.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
 async function sendToFriend(friendId, campaign) {
-  // Get friend info for name
   const { friends = [] } = await getStorage(['friends']);
   const friend = friends.find(f => f.id === friendId);
   if (!friend) {
@@ -123,42 +137,77 @@ async function sendToFriend(friendId, campaign) {
     return false;
   }
 
-  // Determine variation — avoid repeating last used
   const lastVariation = campaign.lastVariationIndex ?? null;
   const variationIndex = getRandomVariationIndex(lastVariation);
   const message = applyMessage(variationIndex, friend.firstName || friend.name.split(' ')[0]);
 
-  // Open background tab to Messenger
-  const url = `https://www.messenger.com/t/${friendId}`;
-  const tab = await new Promise(resolve => {
-    chrome.tabs.create({ url, active: false }, resolve);
-  });
+  // Use facebook.com/messages (same session as friends scraping, more reliable than messenger.com)
+  const url = `https://www.facebook.com/messages/t/${friendId}`;
+  const tab = await new Promise(resolve => chrome.tabs.create({ url, active: false }, resolve));
 
-  // Wait for content script to be ready, then send
-  await sleep(3000);
+  // Wait for page to fully load, then give React UI time to mount
+  await waitForTabLoad(tab.id, 20000);
+  await sleep(3500);
 
   try {
-    const result = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timeout')), 30000);
-      chrome.tabs.sendMessage(tab.id, { type: 'SEND_MESSAGE', friendId, message }, response => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response);
+    // Inject message sending directly — no content script dependency
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (msg) => {
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        // Wait for Messenger input to appear (up to 12s)
+        let input = null;
+        for (let i = 0; i < 24; i++) {
+          input = document.querySelector('[role="textbox"][contenteditable="true"]') ||
+                  document.querySelector('div[contenteditable="true"][data-lexical-editor="true"]') ||
+                  document.querySelector('div[aria-label][contenteditable="true"]');
+          if (input) break;
+          await sleep(500);
         }
-      });
+
+        if (!input) return { success: false, error: 'Message input not found after 12s' };
+
+        // Check if user is actively using this tab (defer if focused)
+        if (document.hasFocus()) return { defer: true };
+
+        // Focus and type the message
+        input.focus();
+        await sleep(300);
+
+        // Clear any existing text then insert
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+        document.execCommand('insertText', false, msg);
+        await sleep(600);
+
+        // Verify text was inserted
+        const typed = (input.textContent || '').trim();
+        if (!typed) return { success: false, error: 'Text did not insert into input' };
+
+        // Send with Enter
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+        }));
+        await sleep(1500);
+
+        // Confirm sent: input should be empty now
+        const cleared = (input.textContent || '').trim() === '';
+        return { success: cleared, error: cleared ? null : 'Input still has text after Enter — may not have sent' };
+      },
+      args: [message]
     });
 
-    if (result && result.defer) {
-      console.log('[FSI] Deferred — user is on Messenger. Rescheduling 15min.');
-      chrome.tabs.remove(tab.id);
+    const result = results?.[0]?.result;
+
+    if (result?.defer) {
+      console.log('[FSI] User is on Messenger — deferring 15min.');
+      chrome.tabs.remove(tab.id).catch(() => {});
       scheduleAlarm(DEFER_MIN);
       return 'deferred';
     }
 
-    if (result && result.success) {
-      // Update record
+    if (result?.success) {
       const now = new Date().toISOString();
       campaign.sendRecords[friendId] = {
         status: 'sent',
@@ -169,14 +218,15 @@ async function sendToFriend(friendId, campaign) {
       };
       campaign.sentToday = (campaign.sentToday || 0) + 1;
       campaign.lastVariationIndex = variationIndex;
-      chrome.tabs.remove(tab.id);
+      console.log(`[FSI] ✅ Sent to ${friend.name}`);
+      chrome.tabs.remove(tab.id).catch(() => {});
       return true;
     }
 
-    throw new Error(result?.error || 'Unknown error');
+    throw new Error(result?.error || 'Unknown send failure');
 
   } catch (err) {
-    console.error(`[FSI] Send failed for ${friendId}:`, err.message);
+    console.error(`[FSI] Send failed for ${friend.name}:`, err.message);
     const now = new Date().toISOString();
     campaign.sendRecords[friendId] = {
       status: 'failed',
@@ -185,7 +235,7 @@ async function sendToFriend(friendId, campaign) {
       sentAt: null,
       error: err.message
     };
-    chrome.tabs.remove(tab.id);
+    chrome.tabs.remove(tab.id).catch(() => {});
     return false;
   }
 }
