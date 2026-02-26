@@ -183,58 +183,100 @@ async function sendToFriend(friendId, campaign) {
     // Note: Removed defer check — it was broken (we open tab as active, so hasFocus always true)
     // User chose to start campaign; we'll send. If they're chatting, they can pause.
 
-    // Step 2: Insert message into input (multiple fallback strategies)
-    const insertOk = await exec((msg) => {
+    // Step 2: Type message character by character (most reliable for Lexical)
+    // This ensures Lexical's internal state stays in sync
+    console.log('[FSI] Typing message character by character...');
+    
+    for (let i = 0; i < message.length; i++) {
+      const char = message[i];
+      await exec((c) => {
+        const input = document.querySelector('[role="textbox"][contenteditable="true"]');
+        if (!input) return;
+        input.focus();
+        
+        // Simulate full keystroke sequence
+        const opts = { key: c, code: `Key${c.toUpperCase()}`, bubbles: true, cancelable: true };
+        input.dispatchEvent(new KeyboardEvent('keydown', opts));
+        
+        // InputEvent is what Lexical actually listens for
+        input.dispatchEvent(new InputEvent('beforeinput', { 
+          bubbles: true, cancelable: true, inputType: 'insertText', data: c 
+        }));
+        
+        // For contenteditable, we need to actually insert the character
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(c));
+          range.collapse(false);
+        }
+        
+        input.dispatchEvent(new InputEvent('input', { 
+          bubbles: true, inputType: 'insertText', data: c 
+        }));
+        input.dispatchEvent(new KeyboardEvent('keyup', opts));
+      }, [char]);
+      
+      // Small delay every 10 chars to let React catch up
+      if (i % 10 === 9) await sleep(50);
+    }
+    
+    // Verify text was inserted
+    const insertCheck = await exec((expected) => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
-      if (!input) return { ok: false, method: 'none', error: 'input not found' };
-      input.focus();
-
-      // Strategy 1: execCommand (works in some editors)
-      document.execCommand('selectAll', false, null);
-      document.execCommand('delete', false, null);
-      const execOk = document.execCommand('insertText', false, msg);
-      if (execOk && (input.textContent || '').trim().length > 0) {
-        return { ok: true, method: 'execCommand' };
-      }
-
-      // Strategy 2: Direct innerHTML + input event (for Lexical)
-      // Lexical uses <p><br></p> structure, we need to replace content properly
-      const p = input.querySelector('p') || input;
-      p.innerHTML = msg;
-      input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: msg }));
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: msg }));
-      if ((input.textContent || '').trim().length > 0) {
-        return { ok: true, method: 'innerHTML+input' };
-      }
-
-      // Strategy 3: textContent + input event
-      input.textContent = msg;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: msg }));
-      if ((input.textContent || '').trim().length > 0) {
-        return { ok: true, method: 'textContent+input' };
-      }
-
-      return { ok: false, method: 'all failed', error: 'No strategy inserted text' };
+      const actual = (input?.textContent || '').trim();
+      return { ok: actual.length > 0, actual: actual.substring(0, 50), expected: expected.substring(0, 50) };
     }, [message]);
-
-    const insertResult = insertOk[0]?.result;
-    if (!insertResult?.ok) throw new Error(`Text insert failed: ${insertResult?.error || 'unknown'}`);
-    console.log(`[FSI] Message inserted via ${insertResult.method}, pressing Enter...`);
+    
+    const insertResult = insertCheck[0]?.result;
+    if (!insertResult?.ok) throw new Error(`Text insert failed: got "${insertResult?.actual || 'empty'}"`);
+    console.log('[FSI] Message typed, pressing Enter...');
 
     await sleep(700);
 
-    // Step 4: Press Enter to send
-    await exec(() => {
+    // Step 3: Press Enter to send (multiple strategies)
+    const sendResult = await exec(() => {
       const input = document.querySelector('[role="textbox"][contenteditable="true"]');
-      if (!input) return;
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      if (!input) return { sent: false, method: 'none', error: 'input not found' };
+      
+      // Strategy 1: Click send button if it exists
+      const sendBtn = document.querySelector('[aria-label="Press enter to send"]') 
+        || document.querySelector('[aria-label="Send"]')
+        || document.querySelector('[data-testid="send-button"]');
+      if (sendBtn) {
+        sendBtn.click();
+        return { sent: true, method: 'sendButton' };
+      }
+
+      // Strategy 2: Full keyboard event sequence on input
+      const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      input.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+      input.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+      input.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+      
+      return { sent: true, method: 'keyboardEvents' };
     });
+    console.log(`[FSI] Send attempted via ${sendResult[0]?.result?.method}`);
 
-    await sleep(1500);
+    await sleep(2500);
 
-    // Step 5: Verify sent (input should be empty)
-    const cleared = await exec(() => (document.querySelector('[role="textbox"][contenteditable="true"]')?.textContent || '').trim() === '');
-    const result = { success: !!cleared[0]?.result, error: cleared[0]?.result ? null : 'Input not cleared after Enter' };
+    // Step 4: Verify sent - check for our message in conversation OR input cleared
+    const verification = await exec((msgSnippet) => {
+      const input = document.querySelector('[role="textbox"][contenteditable="true"]');
+      const inputCleared = !input || (input.textContent || '').trim() === '';
+      
+      // Look for sent message bubbles (they appear on the right side with specific attributes)
+      const messages = document.querySelectorAll('[data-scope="messages_table"] [dir="auto"]');
+      const lastMessages = Array.from(messages).slice(-5);
+      const foundOurMessage = lastMessages.some(m => (m.textContent || '').includes(msgSnippet));
+      
+      return { inputCleared, foundOurMessage, lastMsgCount: messages.length };
+    }, [message.substring(0, 30)]); // Check first 30 chars of our message
+    
+    const v = verification[0]?.result;
+    const success = v?.inputCleared; // For now, trust input cleared (we'll refine later)
+    const result = { success, error: success ? null : 'Message may not have sent' };
 
     if (result?.success) {
       const now = new Date().toISOString();
