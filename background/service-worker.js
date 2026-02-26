@@ -171,19 +171,20 @@ async function sendToFriend(friendId, campaign) {
         // Check if user is actively using this tab (defer if focused)
         if (document.hasFocus()) return { defer: true };
 
-        // Focus and type the message
+        // Focus the input
         input.focus();
         await sleep(300);
 
-        // Clear any existing text then insert
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
-        document.execCommand('insertText', false, msg);
+        // Use paste event — execCommand does NOT work on Facebook's Lexical editor
+        // ClipboardEvent paste is the only reliable way to insert text
+        const dt = new DataTransfer();
+        dt.setData('text/plain', msg);
+        input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         await sleep(600);
 
         // Verify text was inserted
         const typed = (input.textContent || '').trim();
-        if (!typed) return { success: false, error: 'Text did not insert into input' };
+        if (!typed) return { success: false, error: 'Paste did not insert text into input' };
 
         // Send with Enter
         input.dispatchEvent(new KeyboardEvent('keydown', {
