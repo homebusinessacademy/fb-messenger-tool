@@ -61,8 +61,9 @@
     // Find the scrollable container — Facebook renders the friends list in a scrollable div,
     // not the window. Try multiple candidates.
     function getScrollContainer() {
-      // Most specific first
+      // Most specific first — based on actual FB DOM (navigation[aria-label="All friends"])
       const candidates = [
+        document.querySelector('[aria-label="All friends"]'),
         document.querySelector('[data-pagelet="FriendsListPageContent"]'),
         document.querySelector('[role="main"]'),
         document.querySelector('[aria-label="Friends"]'),
@@ -124,44 +125,18 @@
   }
 
   function extractFriendsFromDOM(friends, seen) {
-    // The key signal for a friend entry: an <a> tag with a Facebook profile URL
-    // that ALSO contains BOTH a profile image AND a name span.
-    // This avoids picking up nav links, ads, etc.
+    // Based on real DOM inspection: friends are links inside navigation[aria-label="All friends"]
+    // Each link has aria-label like "Dan Krencisz Dan Krencisz 64 mutual friends More"
+    // and href like https://www.facebook.com/dan.krencisz.2025
 
-    // Collect candidate links — try targeted containers first, then fall back broadly
-    let candidateLinks = [];
+    // Get the friends navigation container
+    const container = document.querySelector('[aria-label="All friends"]') ||
+                      document.querySelector('nav[aria-label*="friend"]') ||
+                      document.querySelector('[role="navigation"]');
 
-    // 1. Most targeted: friends list pagelet
-    const pagelet = document.querySelector('[data-pagelet="FriendsListPageContent"]');
-    if (pagelet) {
-      candidateLinks = Array.from(pagelet.querySelectorAll('a[href]'));
-    }
-
-    // 2. Try aria-label="Friends" container
-    if (candidateLinks.length === 0) {
-      const ariaFriends = document.querySelector('[aria-label="Friends"]');
-      if (ariaFriends) {
-        candidateLinks = Array.from(ariaFriends.querySelectorAll('a[href]'));
-      }
-    }
-
-    // 3. Try ul/li list items (another FB structure)
-    if (candidateLinks.length === 0) {
-      candidateLinks = Array.from(document.querySelectorAll('ul li a[href*="facebook.com"]'));
-    }
-
-    // 4. Fall back to role="main" (broad but better than all links)
-    if (candidateLinks.length === 0) {
-      const main = document.querySelector('[role="main"]');
-      if (main) {
-        candidateLinks = Array.from(main.querySelectorAll('a[href]'));
-      }
-    }
-
-    // 5. Last resort: all links on the page
-    if (candidateLinks.length === 0) {
-      candidateLinks = Array.from(document.querySelectorAll('a[href]'));
-    }
+    const candidateLinks = container
+      ? Array.from(container.querySelectorAll('a[href*="facebook.com"]'))
+      : Array.from(document.querySelectorAll('a[href*="facebook.com"]'));
 
     const EXCLUDED_USERNAMES = new Set([
       'friends', 'groups', 'pages', 'events', 'marketplace', 'watch',
@@ -192,44 +167,45 @@
 
       if (!userId || seen.has(userId)) return;
 
-      // Key signal: must have BOTH an image AND a named span (friend card structure)
       const img = link.querySelector('img');
-      const spanEl = link.querySelector('span');
-
-      // If we found both img+span — this is almost certainly a friend card
-      // If not, still try but be more strict about name quality
-      const hasPhoto = !!img;
       const profilePhotoUrl = img?.src || '';
 
-      // Extract name — prefer span text, fall back to link text
+      // Extract name from aria-label — FB format: "John Smith John Smith 64 mutual friends More"
+      // or just "John Smith John Smith More"
       let name = '';
-      if (spanEl) {
-        // Find the span with the best name candidate (longest span text that looks like a name)
-        const allSpans = Array.from(link.querySelectorAll('span'));
-        const nameCandidates = allSpans
+      const ariaLabel = link.getAttribute('aria-label') || '';
+      if (ariaLabel) {
+        // Remove trailing "More" and mutual friends count
+        const cleaned = ariaLabel
+          .replace(/\s*\d+\s+mutual friends/i, '')
+          .replace(/\s*More\s*$/i, '')
+          .trim();
+        // Name appears doubled — take first half
+        const half = Math.ceil(cleaned.length / 2);
+        const firstHalf = cleaned.substring(0, half).trim();
+        const secondHalf = cleaned.substring(half).trim();
+        // Verify it's actually doubled (both halves match approximately)
+        if (firstHalf && firstHalf === secondHalf) {
+          name = firstHalf;
+        } else if (firstHalf) {
+          name = firstHalf; // Use first half anyway
+        }
+      }
+
+      // Fallback: try span text
+      if (!name) {
+        const spans = Array.from(link.querySelectorAll('span'));
+        const candidates = spans
           .map(s => s.textContent?.trim())
-          .filter(t => t && t.length >= 2 && t.length <= 80 && !/^\d+$/.test(t) &&
-                       !t.includes('·') && !t.includes('ago') && !t.includes('friend') &&
-                       !/^\d+ (mutual|common)/i.test(t));
-        name = nameCandidates[0] || link.textContent?.trim() || '';
-      } else {
-        name = link.textContent?.trim() || '';
+          .filter(t => t && t.length >= 2 && t.length <= 60 &&
+                       !/^\d+$/.test(t) && !/mutual/i.test(t) &&
+                       !t.includes('·') && !t.includes('ago'));
+        name = candidates[0] || '';
       }
 
       if (!name || name.length < 2 || name.length > 80) return;
-      if (/^\d+$/.test(name) || name.includes('·') || name.includes('ago')) return;
 
-      // Require photo+name combo OR be lenient if we're in the friends pagelet
-      if (!hasPhoto && !pagelet) return; // outside targeted containers, require photo
-
-      // Try to get numeric Facebook UID from data attributes
-      const container = link.closest('[data-friend-id]') ||
-                        link.closest('[data-uid]') ||
-                        link.closest('[data-id]');
-      const numericId = container?.dataset?.friendId ||
-                        container?.dataset?.uid ||
-                        container?.dataset?.id ||
-                        userId;
+      const numericId = userId;
 
       seen.add(userId);
       const firstName = extractFirstName(name);
