@@ -171,8 +171,15 @@ function App() {
     setPreviewMessage(preview);
   }, []);
 
+  // Persist friend selections to storage whenever they change
+  useEffect(() => {
+    if (selectedIds.size > 0) {
+      chrome.storage.local.set({ selectedIds: [...selectedIds] });
+    }
+  }, [selectedIds]);
+
   async function initFromStorage() {
-    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail', 'authToken']);
+    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail', 'authToken', 'selectedIds']);
     
     // Clear the badge when popup opens (user has seen the notification)
     sendToSW('CLEAR_BADGE').catch(() => {});
@@ -217,11 +224,19 @@ function App() {
       setFriends(friendsWithHba);
       setHbaMembers(memberSet);
 
-      // Pre-select non-HBA members who haven't been invited in the last 90 days
-      const eligible = new Set(friendsWithHba.filter(f => 
-        !f.hbaMember && !isInvitedWithin90Days(f.invitedDate)
-      ).map(f => f.id));
-      setSelectedIds(eligible);
+      // Restore persisted selections if available, otherwise pre-select eligible
+      if (data.selectedIds && data.selectedIds.length > 0) {
+        // Restore saved selections (filter out any IDs no longer in friends list)
+        const validIds = new Set(friendsWithHba.map(f => f.id));
+        const restored = new Set(data.selectedIds.filter(id => validIds.has(id)));
+        setSelectedIds(restored);
+      } else {
+        // First load — auto-select eligible friends
+        const eligible = new Set(friendsWithHba.filter(f =>
+          !f.hbaMember && !isInvitedWithin90Days(f.invitedDate)
+        ).map(f => f.id));
+        setSelectedIds(eligible);
+      }
       setScreen('review');
       return;
     }
@@ -365,6 +380,7 @@ function App() {
     });
 
     if (result?.success) {
+      chrome.storage.local.remove(['selectedIds']); // selections consumed by campaign
       const status = await sendToSW('GET_STATUS');
       setCampaignData(status.campaign);
       setScreen('campaign');
@@ -390,7 +406,7 @@ function App() {
   }
 
   async function handleNewCampaign() {
-    await chrome.storage.local.remove(['campaign']);
+    await chrome.storage.local.remove(['campaign', 'selectedIds']);
     setCampaignData(null);
     setScreen('welcome');
     setFriends([]);
@@ -416,6 +432,7 @@ function App() {
 
   function deselectAll() {
     setSelectedIds(new Set());
+    chrome.storage.local.remove(['selectedIds']);
   }
 
   const filteredFriends = friends
@@ -448,7 +465,7 @@ function App() {
   if (screen === 'intro') return <IntroScreen onContinue={handleIntroComplete} />;
 
   async function handleReloadFriends() {
-    await chrome.storage.local.remove(['friends', 'hbaMembers', 'scrapeStatus', 'scrapeProgress', 'scrapeError']);
+    await chrome.storage.local.remove(['friends', 'hbaMembers', 'scrapeStatus', 'scrapeProgress', 'scrapeError', 'selectedIds']);
     setFriends([]);
     setSelectedIds(new Set());
     handleLoadFriends();
