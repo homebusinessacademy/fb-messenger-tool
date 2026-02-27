@@ -46,8 +46,8 @@ const MAX_DAILY = 10;
 const WINDOW_START_HOUR = 9;   // 9am
 const WINDOW_END_HOUR = 20;    // 8pm
 
-// ⚠️ TEST MODE — set TEST_MODE = false before going live
-const TEST_MODE = true; // ⚠️ flip to false before going live
+// ⚠️ TEST MODE — set TEST_MODE = true for testing (1-2 min gaps, no time window)
+const TEST_MODE = false; // LIVE MODE: 30-60 min gaps, 9am-8pm window
 const MIN_GAP_MIN = TEST_MODE ? 1   : 30;
 const MAX_GAP_MIN = TEST_MODE ? 2   : 60;
 const DEFER_MIN   = TEST_MODE ? 1   : 15;
