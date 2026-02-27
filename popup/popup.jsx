@@ -87,10 +87,18 @@ function isHbaMember(memberSet, fullName) {
       const mLast = mParts.length >= 2 ? mParts[mParts.length - 1] : origParts[origParts.length - 1];
       
       // Check if first names match (exact, prefix, or common root)
+      // Common prefix: find how many chars match from start
+      let commonPrefix = 0;
+      for (let i = 0; i < Math.min(mFirst.length, fbFirst.length); i++) {
+        if (mFirst[i] === fbFirst[i]) commonPrefix++;
+        else break;
+      }
+      
       const firstNameMatch = 
         mFirst === fbFirst || 
-        (mFirst.length >= 3 && fbFirst.startsWith(mFirst)) ||  // Albie → Albion
-        (fbFirst.length >= 3 && mFirst.startsWith(fbFirst));   // Jay → Jaynesh
+        (mFirst.length >= 3 && fbFirst.startsWith(mFirst)) ||  // Jay → Jaynesh
+        (fbFirst.length >= 3 && mFirst.startsWith(fbFirst)) || // Jaynesh → Jay
+        (commonPrefix >= 4);                                    // Albie ↔ Albion (share "albi")
       
       if (!firstNameMatch) continue;
       
