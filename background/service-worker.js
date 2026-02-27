@@ -541,6 +541,10 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 const NAME_SUFFIXES_SW = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', '2nd', '3rd', '4th', 'esq', 'phd', 'md']);
 
+function normalizeAccentsSW(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function stripSuffixesSW(parts) {
   while (parts.length > 1 && NAME_SUFFIXES_SW.has(parts[parts.length - 1])) {
     parts = parts.slice(0, -1);
@@ -550,7 +554,7 @@ function stripSuffixesSW(parts) {
 
 function isHbaMemberSW(memberSet, fullName) {
   if (!fullName || memberSet.size === 0) return false;
-  const n = fullName.toLowerCase().trim();
+  const n = normalizeAccentsSW(fullName.toLowerCase().trim());
   if (memberSet.has(n)) return true;
   
   let fbParts = n.split(/\s+/).filter(Boolean);

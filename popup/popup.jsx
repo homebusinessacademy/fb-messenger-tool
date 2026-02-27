@@ -33,9 +33,14 @@ function isInvitedWithin90Days(invitedDate) {
 }
 
 // ─── HBA Membership Matching ──────────────────────────────────────────────────
-// Robust match with suffix stripping and flexible last name matching
+// Robust match with suffix stripping, accent normalization, and flexible matching
 
 const NAME_SUFFIXES = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', '2nd', '3rd', '4th', 'esq', 'phd', 'md']);
+
+// Remove accents/diacritics (ë→e, é→e, ñ→n, etc.)
+function normalizeAccents(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
 function stripSuffixes(parts) {
   // Remove common name suffixes from the end
@@ -47,7 +52,7 @@ function stripSuffixes(parts) {
 
 function isHbaMember(memberSet, fullName) {
   if (!fullName || memberSet.size === 0) return false;
-  const nameLower = fullName.toLowerCase().trim();
+  const nameLower = normalizeAccents(fullName.toLowerCase().trim());
 
   // 1. Exact full name match
   if (memberSet.has(nameLower)) return true;
