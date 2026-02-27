@@ -57,7 +57,7 @@ const ALARM_NAME = 'send-next-message';
 // ─── HBA API Configuration ───────────────────────────────────────────────────
 
 const HBA_API_BASE = 'https://thehba.app/api';
-const HBA_API_KEY = 'REPLACE_WITH_EXTERNAL_API_KEY'; // TODO: Get from Paul after deployment
+const HBA_API_KEY = 'hba_ext_c325ec8038e60a56519d2ce63318875b0caa60e01e2c94f7fa12c99a6d1a7855';
 
 // Check if email has active HBA subscription (public endpoint)
 async function checkActiveMember(email) {
