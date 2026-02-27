@@ -86,14 +86,22 @@ function isHbaMember(memberSet, fullName) {
       const mFirst = mParts[0];
       const mLast = mParts.length >= 2 ? mParts[mParts.length - 1] : origParts[origParts.length - 1];
       
-      // First names must match, last names must match (after stripping suffixes)
-      if (mFirst === fbFirst && mLast === fbLast) return true;
+      // Check if first names match (exact, prefix, or common root)
+      const firstNameMatch = 
+        mFirst === fbFirst || 
+        (mFirst.length >= 3 && fbFirst.startsWith(mFirst)) ||  // Albie → Albion
+        (fbFirst.length >= 3 && mFirst.startsWith(fbFirst));   // Jay → Jaynesh
+      
+      if (!firstNameMatch) continue;
+      
+      // First names match, now check last names
+      if (mLast === fbLast) return true;
       
       // Also check if FB last name appears anywhere in HBA name (handles middle names as last names)
-      if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
+      if (mParts.includes(fbLast)) return true;
       
       // And vice versa - if HBA last name appears anywhere in FB name
-      if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+      if (fbParts.includes(mLast)) return true;
     }
   }
 

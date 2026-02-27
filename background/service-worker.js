@@ -581,9 +581,17 @@ function isHbaMemberSW(memberSet, fullName) {
       const mFirst = mParts[0];
       const mLast = mParts.length >= 2 ? mParts[mParts.length - 1] : origParts[origParts.length - 1];
       
-      if (mFirst === fbFirst && mLast === fbLast) return true;
-      if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
-      if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+      // Check if first names match (exact, prefix, or common root)
+      const firstNameMatch = 
+        mFirst === fbFirst || 
+        (mFirst.length >= 3 && fbFirst.startsWith(mFirst)) ||
+        (fbFirst.length >= 3 && mFirst.startsWith(fbFirst));
+      
+      if (!firstNameMatch) continue;
+      
+      if (mLast === fbLast) return true;
+      if (mParts.includes(fbLast)) return true;
+      if (fbParts.includes(mLast)) return true;
     }
   }
   return false;
