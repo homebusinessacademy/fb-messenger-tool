@@ -539,18 +539,42 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 // ─── Friend Scraping (runs in SW so popup stays open) ────────────────────────
 
+const NAME_SUFFIXES_SW = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', '2nd', '3rd', '4th', 'esq', 'phd', 'md']);
+
+function stripSuffixesSW(parts) {
+  while (parts.length > 1 && NAME_SUFFIXES_SW.has(parts[parts.length - 1])) {
+    parts = parts.slice(0, -1);
+  }
+  return parts;
+}
+
 function isHbaMemberSW(memberSet, fullName) {
   if (!fullName || memberSet.size === 0) return false;
   const n = fullName.toLowerCase().trim();
   if (memberSet.has(n)) return true;
-  const parts = n.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    const fl = `${parts[0]} ${parts[parts.length - 1]}`;
-    if (memberSet.has(fl)) return true;
-    for (const m of memberSet) {
-      const mp = m.split(/\s+/).filter(Boolean);
-      if (mp.length >= 2 && mp[0] === parts[0] && mp[mp.length - 1] === parts[parts.length - 1]) return true;
-    }
+  
+  let fbParts = n.split(/\s+/).filter(Boolean);
+  fbParts = stripSuffixesSW(fbParts);
+  if (fbParts.length < 2) return false;
+  
+  const fbFirst = fbParts[0];
+  const fbLast = fbParts[fbParts.length - 1];
+  
+  // First + last match
+  if (memberSet.has(`${fbFirst} ${fbLast}`)) return true;
+  
+  // Check against each member with flexible matching
+  for (const m of memberSet) {
+    let mParts = m.split(/\s+/).filter(Boolean);
+    mParts = stripSuffixesSW(mParts);
+    if (mParts.length < 2) continue;
+    
+    const mFirst = mParts[0];
+    const mLast = mParts[mParts.length - 1];
+    
+    if (mFirst === fbFirst && mLast === fbLast) return true;
+    if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
+    if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
   }
   return false;
 }

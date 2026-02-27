@@ -33,7 +33,18 @@ function isInvitedWithin90Days(invitedDate) {
 }
 
 // ─── HBA Membership Matching ──────────────────────────────────────────────────
-// Robust match: try full name, then first+last (strips middle names)
+// Robust match with suffix stripping and flexible last name matching
+
+const NAME_SUFFIXES = new Set(['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v', '2nd', '3rd', '4th', 'esq', 'phd', 'md']);
+
+function stripSuffixes(parts) {
+  // Remove common name suffixes from the end
+  while (parts.length > 1 && NAME_SUFFIXES.has(parts[parts.length - 1])) {
+    parts = parts.slice(0, -1);
+  }
+  return parts;
+}
+
 function isHbaMember(memberSet, fullName) {
   if (!fullName || memberSet.size === 0) return false;
   const nameLower = fullName.toLowerCase().trim();
@@ -41,24 +52,37 @@ function isHbaMember(memberSet, fullName) {
   // 1. Exact full name match
   if (memberSet.has(nameLower)) return true;
 
-  // 2. First + last only (strip middle names from both sides)
-  const parts = nameLower.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    const firstLast = `${parts[0]} ${parts[parts.length - 1]}`;
-    if (memberSet.has(firstLast)) return true;
-  }
+  // 2. Parse and clean the Facebook name
+  let fbParts = nameLower.split(/\s+/).filter(Boolean);
+  fbParts = stripSuffixes(fbParts);
+  
+  if (fbParts.length < 2) return false;
+  
+  const fbFirst = fbParts[0];
+  const fbLast = fbParts[fbParts.length - 1];
 
-  // 3. Check if any member name starts with the friend's first name + last name
-  // (handles cases where HBA has middle name but Facebook doesn't, or vice versa)
-  if (parts.length >= 2) {
-    const firstName = parts[0];
-    const lastName = parts[parts.length - 1];
-    for (const member of memberSet) {
-      const mParts = member.split(/\s+/).filter(Boolean);
-      if (mParts.length >= 2 && mParts[0] === firstName && mParts[mParts.length - 1] === lastName) {
-        return true;
-      }
-    }
+  // 3. First + last only match
+  const firstLast = `${fbFirst} ${fbLast}`;
+  if (memberSet.has(firstLast)) return true;
+
+  // 4. Check against each HBA member with flexible matching
+  for (const member of memberSet) {
+    let mParts = member.split(/\s+/).filter(Boolean);
+    mParts = stripSuffixes(mParts);
+    
+    if (mParts.length < 2) continue;
+    
+    const mFirst = mParts[0];
+    const mLast = mParts[mParts.length - 1];
+    
+    // First names must match, last names must match (after stripping suffixes)
+    if (mFirst === fbFirst && mLast === fbLast) return true;
+    
+    // Also check if FB last name appears anywhere in HBA name (handles middle names as last names)
+    if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
+    
+    // And vice versa - if HBA last name appears anywhere in FB name
+    if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
   }
 
   return false;
