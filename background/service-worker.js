@@ -57,28 +57,58 @@ const ALARM_NAME = 'send-next-message';
 // ─── HBA API Configuration ───────────────────────────────────────────────────
 
 const HBA_API_BASE = 'https://thehba.app/api';
-const HBA_API_KEY = 'hba_ext_c325ec8038e60a56519d2ce63318875b0caa60e01e2c94f7fa12c99a6d1a7855';
 
-// Check if email has active HBA subscription (public endpoint)
-async function checkActiveMember(email) {
+// Generate or retrieve device ID (persisted UUID)
+async function getDeviceId() {
+  const data = await getStorage(['deviceId']);
+  if (data.deviceId) return data.deviceId;
+  
+  // Generate new UUID
+  const deviceId = crypto.randomUUID();
+  await setStorage({ deviceId });
+  return deviceId;
+}
+
+// Get stored auth token
+async function getAuthToken() {
+  const data = await getStorage(['authToken']);
+  return data.authToken || null;
+}
+
+// Authenticate with device binding (returns { success, token?, error?, message? })
+async function authenticateDevice(email) {
   try {
-    const res = await fetch(`${HBA_API_BASE}/external/check-active?email=${encodeURIComponent(email)}`);
+    const deviceId = await getDeviceId();
+    const res = await fetch(`${HBA_API_BASE}/fast-start/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, deviceId })
+    });
     const data = await res.json();
-    return data.active === true;
+    
+    if (data.success && data.token) {
+      // Store the token
+      await setStorage({ authToken: data.token, memberEmail: email });
+    }
+    
+    return data;
   } catch (err) {
-    console.error('[FSI] checkActiveMember error:', err);
-    return false;
+    console.error('[FSI] authenticateDevice error:', err);
+    return { success: false, error: 'network_error', message: 'Unable to connect. Please try again.' };
   }
 }
 
-// Log an invite to global registry (protected endpoint)
+// Log an invite to global registry (protected by user token)
 async function logInvite(facebookId) {
   try {
+    const token = await getAuthToken();
+    if (!token) return false;
+    
     const res = await fetch(`${HBA_API_BASE}/fast-start/invites`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${HBA_API_KEY}`
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({ facebookId })
     });
@@ -90,14 +120,17 @@ async function logInvite(facebookId) {
   }
 }
 
-// Bulk check which friends have been invited (protected endpoint)
+// Bulk check which friends have been invited (protected by user token)
 async function bulkCheckInvites(facebookIds) {
   try {
+    const token = await getAuthToken();
+    if (!token) return {};
+    
     const res = await fetch(`${HBA_API_BASE}/fast-start/invites/check`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${HBA_API_KEY}`
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({ facebookIds })
     });
@@ -748,9 +781,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
-  if (message.type === 'CHECK_ACTIVE_MEMBER') {
-    checkActiveMember(message.email).then(active => {
-      sendResponse({ active });
+  if (message.type === 'AUTHENTICATE') {
+    authenticateDevice(message.email).then(result => {
+      sendResponse(result);
     });
     return true;
   }

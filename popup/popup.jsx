@@ -110,13 +110,13 @@ function App() {
   }, []);
 
   async function initFromStorage() {
-    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail']);
+    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail', 'authToken']);
     
     // Clear the badge when popup opens (user has seen the notification)
     sendToSW('CLEAR_BADGE').catch(() => {});
 
-    // Check if user is logged in (has verified email)
-    if (!data.memberEmail) {
+    // Check if user is logged in (has auth token)
+    if (!data.authToken || !data.memberEmail) {
       setScreen('login');
       return;
     }
@@ -254,23 +254,26 @@ function App() {
     setLoginError('');
     setLoginLoading(true);
     try {
-      const result = await sendToSW('CHECK_ACTIVE_MEMBER', { email });
-      if (result?.active) {
-        // Store email and proceed
-        await new Promise(resolve => chrome.storage.local.set({ memberEmail: email }, resolve));
+      const result = await sendToSW('AUTHENTICATE', { email });
+      if (result?.success) {
+        // Token is stored by service worker, just update UI
         setMemberEmail(email);
         setScreen('welcome');
-      } else {
+      } else if (result?.error === 'device_mismatch') {
+        setLoginError('This email is already registered on another device. Contact support if you need to reset.');
+      } else if (result?.error === 'not_active') {
         setLoginError('This email is not associated with an active HBA membership.');
+      } else {
+        setLoginError(result?.message || 'Unable to verify membership. Please try again.');
       }
     } catch (err) {
-      setLoginError('Unable to verify membership. Please try again.');
+      setLoginError('Unable to connect. Please try again.');
     }
     setLoginLoading(false);
   }
 
   async function handleLogout() {
-    await new Promise(resolve => chrome.storage.local.remove(['memberEmail'], resolve));
+    await new Promise(resolve => chrome.storage.local.remove(['memberEmail', 'authToken'], resolve));
     setMemberEmail('');
     setScreen('login');
   }
