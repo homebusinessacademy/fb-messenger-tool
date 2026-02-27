@@ -22,6 +22,16 @@ function getFromStorage(keys) {
   return new Promise(resolve => chrome.storage.local.get(keys, resolve));
 }
 
+// ─── Date Helpers ─────────────────────────────────────────────────────────────
+
+function isInvitedWithin90Days(invitedDate) {
+  if (!invitedDate) return false;
+  const invited = new Date(invitedDate);
+  const now = new Date();
+  const diffDays = (now - invited) / (1000 * 60 * 60 * 24);
+  return diffDays < 90;
+}
+
 // ─── HBA Membership Matching ──────────────────────────────────────────────────
 // Robust match: try full name, then first+last (strips middle names)
 function isHbaMember(memberSet, fullName) {
@@ -155,9 +165,11 @@ function App() {
       setFriends(friendsWithHba);
       setHbaMembers(memberSet);
 
-      // Pre-select non-HBA members
-      const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
-      setSelectedIds(nonHba);
+      // Pre-select non-HBA members who haven't been invited in the last 90 days
+      const eligible = new Set(friendsWithHba.filter(f => 
+        !f.hbaMember && !isInvitedWithin90Days(f.invitedDate)
+      ).map(f => f.id));
+      setSelectedIds(eligible);
       setScreen('review');
       return;
     }
@@ -236,8 +248,10 @@ function App() {
           const friendsWithHba = (data.friends || []).map(f => ({ ...f, hbaMember: isHbaMember(memberSet, f.name) }));
           setFriends(friendsWithHba);
           setHbaMembers(memberSet);
-          const nonHba = new Set(friendsWithHba.filter(f => !f.hbaMember).map(f => f.id));
-          setSelectedIds(nonHba);
+          const eligible = new Set(friendsWithHba.filter(f => 
+            !f.hbaMember && !isInvitedWithin90Days(f.invitedDate)
+          ).map(f => f.id));
+          setSelectedIds(eligible);
           setScreen(data.hasSeenIntro ? 'review' : 'intro');
         }
 
@@ -794,16 +808,20 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
 }
 
 function FriendRow({ friend, checked, onToggle }) {
+  const recentlyInvited = isInvitedWithin90Days(friend.invitedDate);
+  const isDisabled = friend.hbaMember || recentlyInvited;
+  
   return (
     <div
-      onClick={onToggle}
+      onClick={isDisabled ? undefined : onToggle}
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 10,
         padding: '7px 0',
         borderBottom: '1px solid #1e1e38',
-        cursor: 'pointer'
+        cursor: isDisabled ? 'not-allowed' : 'pointer',
+        opacity: isDisabled ? 0.5 : 1
       }}
     >
       {/* Avatar */}
@@ -833,14 +851,17 @@ function FriendRow({ friend, checked, onToggle }) {
         </span>
       )}
 
-      {/* Invited badge */}
+      {/* Invited badge — show different message if within 90 days */}
       {friend.invitedDate && !friend.hbaMember && (
         <span style={{
-          fontSize: 10, color: '#fbbf24', background: '#1c1a0e',
-          border: '1px solid #854d0e', borderRadius: 4,
+          fontSize: 10, 
+          color: recentlyInvited ? '#f87171' : '#fbbf24', 
+          background: recentlyInvited ? '#1c0a0a' : '#1c1a0e',
+          border: `1px solid ${recentlyInvited ? '#7f1d1d' : '#854d0e'}`, 
+          borderRadius: 4,
           padding: '2px 6px', flexShrink: 0
         }}>
-          Invited {friend.invitedDate}
+          {recentlyInvited ? `🚫 Invited ${friend.invitedDate}` : `Invited ${friend.invitedDate}`}
         </span>
       )}
 
@@ -848,9 +869,10 @@ function FriendRow({ friend, checked, onToggle }) {
       <input
         type="checkbox"
         checked={checked}
-        onChange={onToggle}
+        disabled={isDisabled}
+        onChange={isDisabled ? undefined : onToggle}
         onClick={e => e.stopPropagation()}
-        style={{ flexShrink: 0 }}
+        style={{ flexShrink: 0, cursor: isDisabled ? 'not-allowed' : 'pointer' }}
       />
     </div>
   );
