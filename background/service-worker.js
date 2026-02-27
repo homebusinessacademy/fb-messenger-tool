@@ -569,16 +569,22 @@ function isHbaMemberSW(memberSet, fullName) {
   
   // Check against each member with flexible matching
   for (const m of memberSet) {
-    let mParts = m.split(/\s+/).filter(Boolean);
-    mParts = stripSuffixesSW(mParts);
-    if (mParts.length < 2) continue;
+    // Handle joint accounts like "Chris and Susan Beesley"
+    const jointNames = m.includes(' and ') ? m.split(' and ') : [m];
     
-    const mFirst = mParts[0];
-    const mLast = mParts[mParts.length - 1];
-    
-    if (mFirst === fbFirst && mLast === fbLast) return true;
-    if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
-    if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+    for (const jointName of jointNames) {
+      let mParts = jointName.trim().split(/\s+/).filter(Boolean);
+      mParts = stripSuffixesSW(mParts);
+      if (mParts.length < 1) continue;
+      
+      const origParts = stripSuffixesSW(m.split(/\s+/).filter(Boolean));
+      const mFirst = mParts[0];
+      const mLast = mParts.length >= 2 ? mParts[mParts.length - 1] : origParts[origParts.length - 1];
+      
+      if (mFirst === fbFirst && mLast === fbLast) return true;
+      if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
+      if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+    }
   }
   return false;
 }

@@ -72,22 +72,29 @@ function isHbaMember(memberSet, fullName) {
 
   // 4. Check against each HBA member with flexible matching
   for (const member of memberSet) {
-    let mParts = member.split(/\s+/).filter(Boolean);
-    mParts = stripSuffixes(mParts);
+    // Handle joint accounts like "Chris and Susan Beesley"
+    const jointNames = member.includes(' and ') ? member.split(' and ') : [member];
     
-    if (mParts.length < 2) continue;
-    
-    const mFirst = mParts[0];
-    const mLast = mParts[mParts.length - 1];
-    
-    // First names must match, last names must match (after stripping suffixes)
-    if (mFirst === fbFirst && mLast === fbLast) return true;
-    
-    // Also check if FB last name appears anywhere in HBA name (handles middle names as last names)
-    if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
-    
-    // And vice versa - if HBA last name appears anywhere in FB name
-    if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+    for (const jointName of jointNames) {
+      let mParts = jointName.trim().split(/\s+/).filter(Boolean);
+      mParts = stripSuffixes(mParts);
+      
+      if (mParts.length < 1) continue;
+      
+      // For joint accounts, last part might just be first name, use original member's last name
+      const origParts = stripSuffixes(member.split(/\s+/).filter(Boolean));
+      const mFirst = mParts[0];
+      const mLast = mParts.length >= 2 ? mParts[mParts.length - 1] : origParts[origParts.length - 1];
+      
+      // First names must match, last names must match (after stripping suffixes)
+      if (mFirst === fbFirst && mLast === fbLast) return true;
+      
+      // Also check if FB last name appears anywhere in HBA name (handles middle names as last names)
+      if (mFirst === fbFirst && mParts.includes(fbLast)) return true;
+      
+      // And vice versa - if HBA last name appears anywhere in FB name
+      if (mFirst === fbFirst && fbParts.includes(mLast)) return true;
+    }
   }
 
   return false;
