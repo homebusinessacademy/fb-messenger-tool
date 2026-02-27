@@ -155,6 +155,7 @@ async function setStorage(data) {
 // ─── Time Helpers ─────────────────────────────────────────────────────────────
 
 function isInWindow(now = new Date()) {
+  if (TEST_MODE) return true; // No time restriction in test mode
   const h = now.getHours();
   return h >= WINDOW_START_HOUR && h < WINDOW_END_HOUR;
 }
