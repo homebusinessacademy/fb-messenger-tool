@@ -366,9 +366,16 @@ function App() {
     setSelectedIds(new Set());
   }
 
-  const filteredFriends = friends.filter(f =>
-    f.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredFriends = friends
+    .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => {
+      // Eligible friends first, disabled (HBA or recently invited) at bottom
+      const aDisabled = a.hbaMember || isInvitedWithin90Days(a.invitedDate);
+      const bDisabled = b.hbaMember || isInvitedWithin90Days(b.invitedDate);
+      if (aDisabled && !bDisabled) return 1;  // a goes after b
+      if (!aDisabled && bDisabled) return -1; // a goes before b
+      return 0; // keep original order
+    });
 
   const hbaCount = friends.filter(f => f.hbaMember).length;
   const estDays = selectedIds.size > 0 ? Math.ceil(selectedIds.size / 8) : 0;
