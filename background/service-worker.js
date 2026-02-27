@@ -6,7 +6,7 @@
 const MESSAGE_VARIATIONS = [
   "Hey {{first_name}}, hope you're having a {great|wonderful|fantastic} day! Quick question. I recently {ran across|came across|found} a {project|business project|business model} that looks like it could be pretty {lucrative|profitable|great}. Would you be open to {taking a peek|checking it out|taking a look}? No worries {if not|if no}, just let me know.",
 
-  "Hey {{first_name}}, hope you're doing well. This might not be for you, but you came to mind when I saw it, so {wanted to touch base|thought I'd reach out} just in case. It's an online {marketing|business} project, different from anything I've seen before, and looks like it could be a pretty {good money maker|income stream|great income generator}. Does that sound like something you'd be open to {taking a look at|checking out}?",
+  "Hey {{first_name}}, hope you're doing well. This might not be for you, but you came to mind when I saw it, so {wanted to touch base|thought I'd reach out} just in case. It's an online {marketing|business} project, different from anything I've seen before, and looks like it could be a pretty {good money maker|lucrative income stream|great income generator}. Does that sound like something you'd be open to {taking a look at|checking out}?",
 
   "Hi {{first_name}}, hope {all is well in your world|everything's going great|life is treating you well}. \uD83D\uDE42 I just {found|came across} something that made me think of you. It's an online business that's pretty {unique|different|one of a kind}. Honestly, I've never seen anything quite like it. Anyway, it looks like it could have some pretty {good|solid|great} potential so I wanted to reach out to see if you'd be open to taking a look?",
 
@@ -53,6 +53,61 @@ const MAX_GAP_MIN = TEST_MODE ? 2   : 60;
 const DEFER_MIN   = TEST_MODE ? 1   : 15;
 
 const ALARM_NAME = 'send-next-message';
+
+// ─── HBA API Configuration ───────────────────────────────────────────────────
+
+const HBA_API_BASE = 'https://thehba.app/api';
+const HBA_API_KEY = 'REPLACE_WITH_EXTERNAL_API_KEY'; // TODO: Get from Paul after deployment
+
+// Check if email has active HBA subscription (public endpoint)
+async function checkActiveMember(email) {
+  try {
+    const res = await fetch(`${HBA_API_BASE}/external/check-active?email=${encodeURIComponent(email)}`);
+    const data = await res.json();
+    return data.active === true;
+  } catch (err) {
+    console.error('[FSI] checkActiveMember error:', err);
+    return false;
+  }
+}
+
+// Log an invite to global registry (protected endpoint)
+async function logInvite(facebookId) {
+  try {
+    const res = await fetch(`${HBA_API_BASE}/fast-start/invites`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${HBA_API_KEY}`
+      },
+      body: JSON.stringify({ facebookId })
+    });
+    const data = await res.json();
+    return data.success === true;
+  } catch (err) {
+    console.error('[FSI] logInvite error:', err);
+    return false;
+  }
+}
+
+// Bulk check which friends have been invited (protected endpoint)
+async function bulkCheckInvites(facebookIds) {
+  try {
+    const res = await fetch(`${HBA_API_BASE}/fast-start/invites/check`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${HBA_API_KEY}`
+      },
+      body: JSON.stringify({ facebookIds })
+    });
+    const data = await res.json();
+    return data; // { "john.smith.123": "2025-12-21", ... }
+  } catch (err) {
+    console.error('[FSI] bulkCheckInvites error:', err);
+    return {};
+  }
+}
 
 // ─── Storage Helpers ─────────────────────────────────────────────────────────
 
@@ -285,6 +340,12 @@ async function sendToFriend(friendId, campaign) {
       chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
       
       console.log(`[FSI] ✅ Sent to ${friend.name}, total sent: ${totalSent}`);
+      
+      // Log to global invite registry
+      logInvite(friendId).then(ok => {
+        if (ok) console.log(`[FSI] Logged invite to registry: ${friendId}`);
+      });
+      
       chrome.tabs.remove(tab.id).catch(() => {});
       return true;
     }
@@ -485,49 +546,78 @@ async function handleScrapeFriends() {
       await sleep(2000);
     }
 
-    // Scroll loop — inline func, no outer scope refs
-    let lastCount = 0, stableRounds = 0;
-    for (let i = 0; i < 80; i++) {
+    // Scroll loop — collect friends into a Map as we scroll (Facebook virtualizes the list)
+    const collectedFriends = new Map(); // id -> friend object
+    let stableScrollRounds = 0;
+    let lastScrollTop = -1;
+    
+    for (let i = 0; i < 120; i++) {
+      // Extract friends currently in DOM and scroll
       const res = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
+          // Find scroll container
           const el = Array.from(document.querySelectorAll('div')).find(e => {
             const s = getComputedStyle(e);
             return ['auto','scroll'].includes(s.overflowY) && e.scrollHeight > e.clientHeight + 200;
           });
-          if (el) el.scrollTop += 1200;
-          return document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]').length;
+          
+          // Extract all friend links currently in DOM
+          const friends = Array.from(
+            document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]')
+          ).map(l => {
+            const name = (l.textContent || '').trim().replace(/\d+\s+mutual.*$/i, '').trim();
+            const href = l.href || '';
+            const userId = href.includes('profile.php')
+              ? href.match(/id=(\d+)/)?.[1]
+              : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
+            const svgImg = l.querySelector('svg image');
+            const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
+            return { id: userId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
+          }).filter(f => f.name && f.id && f.name.length > 1);
+          
+          // Scroll down
+          const scrollTop = el ? el.scrollTop : 0;
+          const scrollHeight = el ? el.scrollHeight : 0;
+          const clientHeight = el ? el.clientHeight : 0;
+          if (el) el.scrollTop += 800;
+          
+          return { friends, scrollTop, scrollHeight, clientHeight };
         }
       });
-      const count = res[0]?.result || 0;
-      await setStorage({ scrapeProgress: count });
       
-      // Update badge with current count
-      chrome.action.setBadgeText({ text: count > 0 ? String(count) : '...' });
+      const { friends, scrollTop, scrollHeight, clientHeight } = res[0]?.result || { friends: [], scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
       
-      if (count !== lastCount) { stableRounds = 0; lastCount = count; } else { stableRounds++; }
-      if (stableRounds >= 10 && count > 0) break;
-      await sleep(1200);
+      // Add new friends to our collection
+      for (const f of friends) {
+        if (!collectedFriends.has(f.id)) {
+          collectedFriends.set(f.id, f);
+        }
+      }
+      
+      const totalCollected = collectedFriends.size;
+      await setStorage({ scrapeProgress: totalCollected });
+      chrome.action.setBadgeText({ text: totalCollected > 0 ? String(totalCollected) : '...' });
+      
+      // Check if we've reached the bottom (scroll position stopped changing)
+      const atBottom = scrollTop + clientHeight >= scrollHeight - 50;
+      if (scrollTop === lastScrollTop) {
+        stableScrollRounds++;
+      } else {
+        stableScrollRounds = 0;
+        lastScrollTop = scrollTop;
+      }
+      
+      // Stop if we've been at the bottom for 5 rounds or scroll hasn't moved for 8 rounds
+      if ((atBottom && stableScrollRounds >= 5) || stableScrollRounds >= 8) {
+        console.log(`[FSI] Scroll complete: ${totalCollected} friends collected`);
+        break;
+      }
+      
+      await sleep(800);
     }
 
-    // Extract all friend data
-    const extractRes = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => Array.from(
-        document.querySelectorAll('[aria-label="All friends"] a[href*="facebook.com"]')
-      ).map(l => {
-        const name = (l.textContent || '').trim().replace(/\d+\s+mutual.*$/i, '').trim();
-        const href = l.href || '';
-        const userId = href.includes('profile.php')
-          ? href.match(/id=(\d+)/)?.[1]
-          : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
-        const svgImg = l.querySelector('svg image');
-        const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
-        return { id: userId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
-      }).filter(f => f.name && f.id && f.name.length > 1)
-    });
-
-    const rawFriends = extractRes[0]?.result || [];
+    const rawFriends = Array.from(collectedFriends.values());
     if (rawFriends.length === 0) throw new Error("No friends found — make sure you're logged into Facebook");
 
     // Fetch HBA members and mark
@@ -535,8 +625,16 @@ async function handleScrapeFriends() {
     const memberSet = new Set(hbaResult.members || []);
     const friendsWithHba = rawFriends.map(f => ({ ...f, hbaMember: isHbaMemberSW(memberSet, f.name) }));
 
-    await setStorage({ friends: friendsWithHba, hbaMembers: [...memberSet], scrapeStatus: 'done' });
-    console.log(`[FSI] Scrape done: ${friendsWithHba.length} friends`);
+    // Check global invite registry
+    const friendIds = friendsWithHba.map(f => f.id).filter(Boolean);
+    const inviteRegistry = await bulkCheckInvites(friendIds);
+    const friendsWithInvites = friendsWithHba.map(f => ({
+      ...f,
+      invitedDate: inviteRegistry[f.id] || null
+    }));
+
+    await setStorage({ friends: friendsWithInvites, hbaMembers: [...memberSet], scrapeStatus: 'done' });
+    console.log(`[FSI] Scrape done: ${friendsWithInvites.length} friends, ${Object.keys(inviteRegistry).length} previously invited`);
     
     // Update badge to show success
     chrome.action.setBadgeText({ text: '✓' });
@@ -600,7 +698,7 @@ async function handleScrapeFriends() {
         // Auto-dismiss after 30 seconds
         setTimeout(() => overlay.remove(), 30000);
       },
-      args: [friendsWithHba.length]
+      args: [friendsWithInvites.length]
     });
     
     return { success: true };
@@ -648,6 +746,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CLEAR_BADGE') {
     chrome.action.setBadgeText({ text: '' });
     sendResponse({ success: true });
+    return true;
+  }
+  if (message.type === 'CHECK_ACTIVE_MEMBER') {
+    checkActiveMember(message.email).then(active => {
+      sendResponse({ active });
+    });
     return true;
   }
 });

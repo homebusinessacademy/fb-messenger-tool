@@ -57,8 +57,11 @@ function isHbaMember(memberSet, fullName) {
 // ─── App Component ────────────────────────────────────────────────────────────
 
 function App() {
-  // State machine: welcome | loading | review | campaign | complete
-  const [screen, setScreen] = useState('welcome');
+  // State machine: login | welcome | loading | review | campaign | complete
+  const [screen, setScreen] = useState('login');
+  const [memberEmail, setMemberEmail] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
   const [friends, setFriends] = useState([]);
   const [hbaMembers, setHbaMembers] = useState(new Set());
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -107,10 +110,17 @@ function App() {
   }, []);
 
   async function initFromStorage() {
-    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress']);
+    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail']);
     
     // Clear the badge when popup opens (user has seen the notification)
     sendToSW('CLEAR_BADGE').catch(() => {});
+
+    // Check if user is logged in (has verified email)
+    if (!data.memberEmail) {
+      setScreen('login');
+      return;
+    }
+    setMemberEmail(data.memberEmail);
 
     // Resume scrape progress display if SW is mid-scrape
     if (data.scrapeStatus === 'running') {
@@ -240,6 +250,31 @@ function App() {
     }, 800);
   }
 
+  async function handleLogin(email) {
+    setLoginError('');
+    setLoginLoading(true);
+    try {
+      const result = await sendToSW('CHECK_ACTIVE_MEMBER', { email });
+      if (result?.active) {
+        // Store email and proceed
+        await new Promise(resolve => chrome.storage.local.set({ memberEmail: email }, resolve));
+        setMemberEmail(email);
+        setScreen('welcome');
+      } else {
+        setLoginError('This email is not associated with an active HBA membership.');
+      }
+    } catch (err) {
+      setLoginError('Unable to verify membership. Please try again.');
+    }
+    setLoginLoading(false);
+  }
+
+  async function handleLogout() {
+    await new Promise(resolve => chrome.storage.local.remove(['memberEmail'], resolve));
+    setMemberEmail('');
+    setScreen('login');
+  }
+
   async function handleLoadFriends() {
     setScreen('loading');
     setLoadProgress(0);
@@ -321,6 +356,8 @@ function App() {
 
   // ─── Render Screens ────────────────────────────────────────────────────────
 
+  if (screen === 'login') return <LoginScreen onLogin={handleLogin} error={loginError} loading={loginLoading} />;
+
   if (screen === 'welcome') return <WelcomeScreen onLoad={handleLoadFriends} />;
 
   if (screen === 'loading') return <LoadingScreen count={loadProgress} />;
@@ -374,6 +411,90 @@ function App() {
   );
 
   return null;
+}
+
+// ─── Screen: Login ───────────────────────────────────────────────────────────
+
+function LoginScreen({ onLogin, error, loading }) {
+  const [email, setEmail] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (email.trim()) {
+      onLogin(email.trim().toLowerCase());
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full" style={{ minHeight: 580, background: '#1a1a2e', padding: '32px 24px' }}>
+      <div style={{ fontSize: 56, marginBottom: 16 }}>🔐</div>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: '#f1f5f9', textAlign: 'center', marginBottom: 8 }}>
+        Members Only
+      </h1>
+      <p style={{ fontSize: 14, color: '#94a3b8', textAlign: 'center', marginBottom: 24 }}>
+        Enter your HBA email to get started
+      </p>
+
+      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 280 }}>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="your@email.com"
+          disabled={loading}
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            fontSize: 14,
+            background: '#0f0f23',
+            border: '1px solid #2a2a4a',
+            borderRadius: 8,
+            color: '#f1f5f9',
+            marginBottom: 12,
+            outline: 'none'
+          }}
+        />
+        
+        {error && (
+          <div style={{
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: 8,
+            padding: '10px 12px',
+            marginBottom: 12
+          }}>
+            <p style={{ fontSize: 12, color: '#f87171', margin: 0 }}>{error}</p>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading || !email.trim()}
+          style={{
+            width: '100%',
+            padding: '12px 24px',
+            fontSize: 15,
+            fontWeight: 600,
+            background: loading ? '#4a4a6a' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            border: 'none',
+            borderRadius: 8,
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: (!email.trim() || loading) ? 0.6 : 1
+          }}
+        >
+          {loading ? 'Verifying...' : 'Continue'}
+        </button>
+      </form>
+
+      <p style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 24 }}>
+        Not a member yet?{' '}
+        <a href="https://thehba.app/go" target="_blank" rel="noopener noreferrer" style={{ color: '#818cf8' }}>
+          Learn more →
+        </a>
+      </p>
+    </div>
+  );
 }
 
 // ─── Screen: Welcome ─────────────────────────────────────────────────────────
@@ -709,6 +830,17 @@ function FriendRow({ friend, checked, onToggle }) {
         </span>
       )}
 
+      {/* Invited badge */}
+      {friend.invitedDate && !friend.hbaMember && (
+        <span style={{
+          fontSize: 10, color: '#fbbf24', background: '#1c1a0e',
+          border: '1px solid #854d0e', borderRadius: 4,
+          padding: '2px 6px', flexShrink: 0
+        }}>
+          Invited {friend.invitedDate}
+        </span>
+      )}
+
       {/* Checkbox */}
       <input
         type="checkbox"
@@ -864,12 +996,9 @@ function CompleteScreen({ campaign, onNewCampaign }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 580, background: '#1a1a2e', padding: '32px 24px', textAlign: 'center' }}>
       <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: '#f1f5f9', marginBottom: 8 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: '#f1f5f9', marginBottom: 16 }}>
         Launch Complete!
       </h1>
-      <p style={{ fontSize: 14, color: '#94a3b8', marginBottom: 8 }}>
-        <span style={{ color: '#60a5fa', fontWeight: 600 }}>{sent} invitations</span> sent over {daysElapsed} day{daysElapsed !== 1 ? 's' : ''}
-      </p>
 
       <div style={{
         background: '#0f0f23',
