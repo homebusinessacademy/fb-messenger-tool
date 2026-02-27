@@ -357,7 +357,9 @@ function App() {
   }
 
   function selectAll() {
-    setSelectedIds(new Set(friends.map(f => f.id)));
+    // Only select friends who are eligible (not HBA members, not recently invited)
+    const eligible = friends.filter(f => !f.hbaMember && !isInvitedWithin90Days(f.invitedDate));
+    setSelectedIds(new Set(eligible.map(f => f.id)));
   }
 
   function deselectAll() {
