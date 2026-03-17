@@ -161,7 +161,12 @@ function isInWindow(now = new Date()) {
 }
 
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  // Use LOCAL date (not UTC) so daily reset aligns with user's 9am-8pm send window
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function minutesUntilWindowOpen() {
