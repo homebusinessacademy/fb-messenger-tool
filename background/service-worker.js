@@ -682,12 +682,13 @@ async function handleScrapeFriends() {
               : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
             const svgImg = l.querySelector('svg image');
             const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
-            // Normalize to numeric ID via photo URL (consistent registry keys regardless of username vs numeric profile URL)
+            // Normalize to numeric ID via photo URL; keep username as fallback for old registry entries
+            let usernameId = null;
             if (profilePhotoUrl && userId && !/^\d+$/.test(userId)) {
               const photoIdMatch = profilePhotoUrl.match(/_(\d{10,})/);
-              if (photoIdMatch) userId = photoIdMatch[1];
+              if (photoIdMatch) { usernameId = userId; userId = photoIdMatch[1]; }
             }
-            return { id: userId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
+            return { id: userId, usernameId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
           }).filter(f => f.name && f.id && f.name.length > 1);
           
           // Scroll down
@@ -739,12 +740,17 @@ async function handleScrapeFriends() {
     const memberSet = new Set(hbaResult.members || []);
     const friendsWithHba = rawFriends.map(f => ({ ...f, hbaMember: isHbaMemberSW(memberSet, f.name) }));
 
-    // Check global invite registry
-    const friendIds = friendsWithHba.map(f => f.id).filter(Boolean);
-    const inviteRegistry = await bulkCheckInvites(friendIds);
+    // Check global invite registry — include both numeric IDs and username fallbacks
+    // (old registry entries may have been stored as usernames before numeric normalization fix)
+    const friendIdKeys = new Set();
+    friendsWithHba.forEach(f => {
+      if (f.id) friendIdKeys.add(f.id);
+      if (f.usernameId) friendIdKeys.add(f.usernameId); // username stored as fallback
+    });
+    const inviteRegistry = await bulkCheckInvites([...friendIdKeys]);
     const friendsWithInvites = friendsWithHba.map(f => ({
       ...f,
-      invitedDate: inviteRegistry[f.id] || null
+      invitedDate: inviteRegistry[f.id] || inviteRegistry[f.usernameId] || null
     }));
 
     await setStorage({ friends: friendsWithInvites, hbaMembers: [...memberSet], scrapeStatus: 'done' });
