@@ -235,11 +235,14 @@ async function sendToFriend(friendId, campaign) {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // JUST-IN-TIME CHECK: Skip if already invited by another member (within 1 year)
-  // This prevents race conditions where two members try to invite the same person
+  // Check both registryId (numeric) and id (username fallback for old entries)
   // ═══════════════════════════════════════════════════════════════════════════
-  const checkResult = await bulkCheckInvites([friendId]);
-  if (checkResult[friendId]) {
-    console.log(`[FSI] Skipping ${friend.name} — already invited on ${checkResult[friendId]}`);
+  const registryId = friend.registryId || friendId;
+  const keysToCheck = registryId !== friendId ? [registryId, friendId] : [friendId];
+  const checkResult = await bulkCheckInvites(keysToCheck);
+  const alreadyInvited = checkResult[registryId] || checkResult[friendId];
+  if (alreadyInvited) {
+    console.log(`[FSI] Skipping ${friend.name} — already invited on ${alreadyInvited}`);
     campaign.sendRecords[friendId] = {
       status: 'skipped',
       messageVariation: null,
@@ -402,9 +405,9 @@ async function sendToFriend(friendId, campaign) {
       console.log(`[FSI] ✅ Sent to ${friend.name}, total sent: ${totalSent}`);
       
       // Log to global invite registry — MUST await to prevent race conditions
-      // (fire-and-forget caused duplicate invites when next friend's JIT check ran before registry updated)
-      const logged = await logInvite(friendId);
-      if (logged) console.log(`[FSI] Logged invite to registry: ${friendId}`);
+      // Use registryId (numeric) for consistent dedup across username/numeric formats
+      const logged = await logInvite(registryId);
+      if (logged) console.log(`[FSI] Logged invite to registry: ${registryId} (friend: ${friendId})`);
       
       chrome.tabs.remove(tab.id).catch(() => {});
       return true;
@@ -682,13 +685,14 @@ async function handleScrapeFriends() {
               : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
             const svgImg = l.querySelector('svg image');
             const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
-            // Normalize to numeric ID via photo URL; keep username as fallback for old registry entries
-            let usernameId = null;
+            // Keep original userId for Messenger URL opening (username works, numeric may not)
+            // Extract registryId (numeric) from photo URL for consistent registry dedup
+            let registryId = userId;
             if (profilePhotoUrl && userId && !/^\d+$/.test(userId)) {
               const photoIdMatch = profilePhotoUrl.match(/_(\d{10,})/);
-              if (photoIdMatch) { usernameId = userId; userId = photoIdMatch[1]; }
+              if (photoIdMatch) registryId = photoIdMatch[1];
             }
-            return { id: userId, usernameId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
+            return { id: userId, registryId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
           }).filter(f => f.name && f.id && f.name.length > 1);
           
           // Scroll down
@@ -740,17 +744,17 @@ async function handleScrapeFriends() {
     const memberSet = new Set(hbaResult.members || []);
     const friendsWithHba = rawFriends.map(f => ({ ...f, hbaMember: isHbaMemberSW(memberSet, f.name) }));
 
-    // Check global invite registry — include both numeric IDs and username fallbacks
-    // (old registry entries may have been stored as usernames before numeric normalization fix)
+    // Check global invite registry — check both registryId (numeric) and id (username fallback)
+    // to catch old entries stored before numeric normalization fix
     const friendIdKeys = new Set();
     friendsWithHba.forEach(f => {
-      if (f.id) friendIdKeys.add(f.id);
-      if (f.usernameId) friendIdKeys.add(f.usernameId); // username stored as fallback
+      if (f.registryId) friendIdKeys.add(f.registryId);
+      if (f.id && f.id !== f.registryId) friendIdKeys.add(f.id); // username fallback for old entries
     });
     const inviteRegistry = await bulkCheckInvites([...friendIdKeys]);
     const friendsWithInvites = friendsWithHba.map(f => ({
       ...f,
-      invitedDate: inviteRegistry[f.id] || inviteRegistry[f.usernameId] || null
+      invitedDate: inviteRegistry[f.registryId] || inviteRegistry[f.id] || null
     }));
 
     await setStorage({ friends: friendsWithInvites, hbaMembers: [...memberSet], scrapeStatus: 'done' });

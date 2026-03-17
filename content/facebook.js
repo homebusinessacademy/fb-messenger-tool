@@ -163,24 +163,20 @@
 
       if (!name || name.length < 2 || name.length > 80) return;
 
-      // Normalize to numeric ID — Facebook photo URLs always contain the numeric user ID
-      // e.g. https://scontent.fbcdn.net/.../p50x50/XXXXX_100046408059565803_XXXXX_n.jpg
-      // Store usernameId as fallback so old registry entries (stored as username) still match
-      let numericId = userId;
-      let usernameId = null;
+      // Keep id as original (username or numeric) — used for Messenger URL opening
+      // Also extract numeric registryId from photo URL for consistent registry dedup
+      // Facebook username-based URLs don't resolve via numeric ID in Messenger, so keep original
+      let registryId = userId; // default to same
       if (profilePhotoUrl && !/^\d+$/.test(userId)) {
         const photoIdMatch = profilePhotoUrl.match(/_(\d{10,})/);
-        if (photoIdMatch) {
-          usernameId = userId; // keep original username as fallback
-          numericId = photoIdMatch[1];
-        }
+        if (photoIdMatch) registryId = photoIdMatch[1];
       }
 
       seen.add(userId);
       const firstName = extractFirstName(name);
       friends.push({
-        id: numericId,
-        usernameId,  // null if already numeric, or original username for fallback registry lookup
+        id: userId,        // original (username or numeric) — used for Messenger URL
+        registryId,        // numeric ID for registry dedup (may equal id if already numeric)
         name,
         firstName,
         profilePhotoUrl,
