@@ -163,7 +163,15 @@
 
       if (!name || name.length < 2 || name.length > 80) return;
 
-      const numericId = userId;
+      // Normalize to numeric ID — Facebook photo URLs always contain the numeric user ID
+      // e.g. https://scontent.fbcdn.net/.../p50x50/XXXXX_100046408059565803_XXXXX_n.jpg
+      // This ensures registry lookups are consistent regardless of whether the profile
+      // URL uses a username (john.smith) or numeric ID (100046408059565803)
+      let numericId = userId;
+      if (profilePhotoUrl && !/^\d+$/.test(userId)) {
+        const photoIdMatch = profilePhotoUrl.match(/_(\d{10,})/);
+        if (photoIdMatch) numericId = photoIdMatch[1];
+      }
 
       seen.add(userId);
       const firstName = extractFirstName(name);

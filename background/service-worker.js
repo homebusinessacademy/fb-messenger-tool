@@ -677,11 +677,16 @@ async function handleScrapeFriends() {
           ).map(l => {
             const name = (l.textContent || '').trim().replace(/\d+\s+mutual.*$/i, '').trim();
             const href = l.href || '';
-            const userId = href.includes('profile.php')
+            let userId = href.includes('profile.php')
               ? href.match(/id=(\d+)/)?.[1]
               : href.split('facebook.com/')[1]?.split('?')[0]?.split('/')[0];
             const svgImg = l.querySelector('svg image');
             const profilePhotoUrl = svgImg?.href?.baseVal || svgImg?.getAttribute('xlink:href') || '';
+            // Normalize to numeric ID via photo URL (consistent registry keys regardless of username vs numeric profile URL)
+            if (profilePhotoUrl && userId && !/^\d+$/.test(userId)) {
+              const photoIdMatch = profilePhotoUrl.match(/_(\d{10,})/);
+              if (photoIdMatch) userId = photoIdMatch[1];
+            }
             return { id: userId, name, firstName: name.split(' ')[0] || '', profilePhotoUrl, hbaMember: false };
           }).filter(f => f.name && f.id && f.name.length > 1);
           
