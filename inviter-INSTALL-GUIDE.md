@@ -24,10 +24,18 @@ Download the ZIP file: **[fast-start-inviter.zip]**
 
 ### Step 2: Unzip the File
 
-1. Find the downloaded `fast-start-inviter.zip` file (usually in your Downloads folder)
-2. **Mac:** Double-click the ZIP file to unzip it
-3. **Windows:** Right-click → "Extract All"
-4. You should now have a folder called `fast-start-inviter`
+**On Mac:**
+1. Find `fast-start-inviter.zip` in your Downloads folder
+2. Double-click it — a new folder appears automatically
+3. ✅ You're done! Move to Step 3
+
+**On Windows:**
+1. Find `fast-start-inviter.zip` in your Downloads folder
+2. **Right-click** the file → click **"Extract All..."**
+3. Click **"Extract"** (leave the default location)
+4. A new folder window opens — ✅ this is what you'll use in Step 5
+
+⚠️ **Windows users:** Don't just double-click the ZIP file! That opens it like a folder but doesn't actually extract it. You MUST right-click → "Extract All"
 
 ### Step 3: Open Chrome Extensions
 
@@ -43,9 +51,11 @@ Download the ZIP file: **[fast-start-inviter.zip]**
 ### Step 5: Load the Extension
 
 1. Click **"Load unpacked"**
-2. Navigate to the `fast-start-inviter` folder you unzipped
-3. Select the folder and click **"Select"** (Mac) or **"Select Folder"** (Windows)
-4. The extension should now appear in your extensions list with a 🚀 icon
+2. Navigate to your Downloads folder
+3. Find and select the `fast-start-inviter` folder (the one you extracted)
+4. **Important:** Make sure you see files like `manifest.json` inside — if you see another folder, go INTO that folder first
+5. Click **"Select"** (Mac) or **"Select Folder"** (Windows)
+6. ✅ The extension appears with a 🚀 icon — you're installed!
 
 ### Step 6: Pin the Extension (Optional but Recommended)
 
@@ -120,6 +130,11 @@ Download the ZIP file: **[fast-start-inviter.zip]**
 **Extension disappeared after Chrome update**
 - Go to `chrome://extensions`
 - Click "Load unpacked" and select the folder again
+
+**"Manifest file is missing" or "Could not load manifest"**
+- You selected the wrong folder. Look for the folder that has `manifest.json` directly inside it
+- **Windows common mistake:** You opened the ZIP without extracting. Right-click the ZIP → "Extract All" first
+- **Mac common mistake:** You selected the outer folder instead of the inner one. Navigate into the folder until you see `manifest.json`
 
 ---
 

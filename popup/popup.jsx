@@ -127,6 +127,7 @@ function App() {
   const [friends, setFriends] = useState([]);
   const [hbaMembers, setHbaMembers] = useState(new Set());
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [safeList, setSafeList] = useState(new Set()); // Friends to permanently exclude
   const [loadProgress, setLoadProgress] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllMessages, setShowAllMessages] = useState(false);
@@ -175,11 +176,27 @@ function App() {
   useEffect(() => {
     if (selectedIds.size > 0) {
       chrome.storage.local.set({ selectedIds: [...selectedIds] });
+    } else {
+      chrome.storage.local.remove(['selectedIds']);
     }
   }, [selectedIds]);
 
+  // Persist safe list (permanent exclusions) whenever it changes
+  useEffect(() => {
+    if (safeList.size > 0) {
+      chrome.storage.local.set({ safeList: [...safeList] });
+    } else {
+      chrome.storage.local.remove(['safeList']);
+    }
+  }, [safeList]);
+
   async function initFromStorage() {
-    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail', 'authToken', 'selectedIds']);
+    const data = await getFromStorage(['friends', 'hbaMembers', 'campaign', 'scrapeStatus', 'scrapeProgress', 'memberEmail', 'authToken', 'selectedIds', 'safeList']);
+    
+    // Load safe list (permanent exclusions)
+    if (data.safeList && data.safeList.length > 0) {
+      setSafeList(new Set(data.safeList));
+    }
     
     // Clear the badge when popup opens (user has seen the notification)
     sendToSW('CLEAR_BADGE').catch(() => {});
@@ -435,7 +452,19 @@ function App() {
     chrome.storage.local.remove(['selectedIds']);
   }
 
+  // Exclude friends on the safe list
+  function excludeFriend(friendId) {
+    setSafeList(prev => new Set([...prev, friendId]));
+    // Also remove from selected if currently selected
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.delete(friendId);
+      return next;
+    });
+  }
+
   const filteredFriends = friends
+    .filter(f => !safeList.has(f.id)) // Hide safe-listed friends
     .filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a, b) => {
       // Eligible friends first, disabled (HBA or recently invited) at bottom
@@ -476,6 +505,7 @@ function App() {
       friends={filteredFriends}
       allFriends={friends}
       selectedIds={selectedIds}
+      safeListCount={safeList.size}
       hbaCount={hbaCount}
       estDays={estDays}
       searchQuery={searchQuery}
@@ -483,6 +513,7 @@ function App() {
       previewMessage={previewMessage}
       onSearch={setSearchQuery}
       onToggleFriend={toggleFriend}
+      onExclude={excludeFriend}
       onSelectAll={selectAll}
       onDeselectAll={deselectAll}
       onShowAllMessages={() => setShowAllMessages(v => !v)}
@@ -754,7 +785,7 @@ function IntroScreen({ onContinue }) {
 
 // ─── Screen: Review & Select ──────────────────────────────────────────────────
 
-function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, searchQuery, showAllMessages, previewMessage, onSearch, onToggleFriend, onSelectAll, onDeselectAll, onShowAllMessages, onStart, onReload }) {
+function ReviewScreen({ friends, allFriends, selectedIds, safeListCount, hbaCount, estDays, searchQuery, showAllMessages, previewMessage, onSearch, onToggleFriend, onExclude, onSelectAll, onDeselectAll, onShowAllMessages, onStart, onReload }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 580, background: '#1a1a2e', overflow: 'hidden' }}>
       {/* Header */}
@@ -835,6 +866,7 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
             friend={friend}
             checked={selectedIds.has(friend.id)}
             onToggle={() => onToggleFriend(friend.id)}
+            onExclude={() => onExclude(friend.id)}
           />
         ))}
       </div>
@@ -844,6 +876,7 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
         <p style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
           <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{selectedIds.size}</span> selected
           {estDays > 0 && <span> • Est. <span style={{ color: '#60a5fa' }}>~{estDays} days</span> to complete</span>}
+          {safeListCount > 0 && <span> • <span style={{ color: '#ef4444' }}>{safeListCount}</span> excluded</span>}
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button
@@ -885,7 +918,7 @@ function ReviewScreen({ friends, allFriends, selectedIds, hbaCount, estDays, sea
   );
 }
 
-function FriendRow({ friend, checked, onToggle }) {
+function FriendRow({ friend, checked, onToggle, onExclude }) {
   const recentlyInvited = isInvitedWithin90Days(friend.invitedDate);
   const isDisabled = friend.hbaMember || recentlyInvited;
   
@@ -902,6 +935,31 @@ function FriendRow({ friend, checked, onToggle }) {
         opacity: isDisabled ? 0.5 : 1
       }}
     >
+      {/* Exclude button — adds to permanent safe list */}
+      <button
+        onClick={e => { e.stopPropagation(); onExclude(); }}
+        title="Never invite this person"
+        style={{
+          width: 20,
+          height: 20,
+          borderRadius: '50%',
+          border: 'none',
+          background: 'transparent',
+          color: '#64748b',
+          fontSize: 12,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          transition: 'color 0.15s, background 0.15s'
+        }}
+        onMouseEnter={e => { e.target.style.color = '#ef4444'; e.target.style.background = '#1c0a0a'; }}
+        onMouseLeave={e => { e.target.style.color = '#64748b'; e.target.style.background = 'transparent'; }}
+      >
+        ✕
+      </button>
+
       {/* Avatar */}
       <div style={{ width: 32, height: 32, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: '#2a2a4a' }}>
         {friend.profilePhotoUrl ? (

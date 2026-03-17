@@ -196,9 +196,11 @@ async function getNextPendingFriend(campaign) {
   const { selectedFriendIds, sendRecords } = campaign;
   for (const friendId of selectedFriendIds) {
     const rec = sendRecords[friendId];
+    // Only return friends that haven't been processed yet
     if (!rec || rec.status === 'pending') {
       return friendId;
     }
+    // Skip friends that are sent, failed, or skipped
   }
   return null;
 }
@@ -225,6 +227,25 @@ async function sendToFriend(friendId, campaign) {
     console.warn(`[FSI] Friend not found: ${friendId}`);
     return false;
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // JUST-IN-TIME CHECK: Skip if already invited by another member (within 1 year)
+  // This prevents race conditions where two members try to invite the same person
+  // ═══════════════════════════════════════════════════════════════════════════
+  const checkResult = await bulkCheckInvites([friendId]);
+  if (checkResult[friendId]) {
+    console.log(`[FSI] Skipping ${friend.name} — already invited on ${checkResult[friendId]}`);
+    campaign.sendRecords[friendId] = {
+      status: 'skipped',
+      messageVariation: null,
+      scheduledAt: new Date().toISOString(),
+      sentAt: null,
+      error: 'Already invited by another HBA member'
+    };
+    await setStorage({ campaign });
+    return false; // Skip this friend, move to next
+  }
+  // ═══════════════════════════════════════════════════════════════════════════
 
   const lastVariation = campaign.lastVariationIndex ?? null;
   const variationIndex = getRandomVariationIndex(lastVariation);
@@ -375,10 +396,10 @@ async function sendToFriend(friendId, campaign) {
       
       console.log(`[FSI] ✅ Sent to ${friend.name}, total sent: ${totalSent}`);
       
-      // Log to global invite registry
-      logInvite(friendId).then(ok => {
-        if (ok) console.log(`[FSI] Logged invite to registry: ${friendId}`);
-      });
+      // Log to global invite registry — MUST await to prevent race conditions
+      // (fire-and-forget caused duplicate invites when next friend's JIT check ran before registry updated)
+      const logged = await logInvite(friendId);
+      if (logged) console.log(`[FSI] Logged invite to registry: ${friendId}`);
       
       chrome.tabs.remove(tab.id).catch(() => {});
       return true;
@@ -396,8 +417,8 @@ async function sendToFriend(friendId, campaign) {
       sentAt: null,
       error: err.message
     };
-    // Store last error for popup debugging
-    await setStorage({ lastSendError: { name: friend.name, error: err.message, at: now } });
+    // Silent skip — no error displayed to user (errors logged to console for debugging)
+    await setStorage({ campaign });
     chrome.tabs.remove(tab.id).catch(() => {});
     return false;
   }
@@ -412,7 +433,7 @@ function isCampaignComplete(campaign) {
   const { selectedFriendIds, sendRecords } = campaign;
   return selectedFriendIds.every(id => {
     const rec = sendRecords[id];
-    return rec && (rec.status === 'sent' || rec.status === 'failed');
+    return rec && (rec.status === 'sent' || rec.status === 'failed' || rec.status === 'skipped');
   });
 }
 
@@ -907,18 +928,17 @@ async function handleCancelCampaign() {
 }
 
 async function getStatus() {
-  const data = await getStorage(['campaign', 'friends', 'lastSendError']);
+  const data = await getStorage(['campaign', 'friends']);
   const campaign = data.campaign;
   if (!campaign) return { campaign: null };
 
   const total = campaign.selectedFriendIds?.length || 0;
   const sent = Object.values(campaign.sendRecords || {}).filter(r => r.status === 'sent').length;
   const failed = Object.values(campaign.sendRecords || {}).filter(r => r.status === 'failed').length;
+  const skipped = Object.values(campaign.sendRecords || {}).filter(r => r.status === 'skipped').length;
   
   // DEBUG: Log what we're returning
-  console.log(`[FSI] getStatus: total=${total}, sent=${sent}, failed=${failed}, status=${campaign.status}`);
-  console.log(`[FSI] getStatus: sendRecords keys:`, Object.keys(campaign.sendRecords || {}));
-  console.log(`[FSI] getStatus: sendRecords statuses:`, Object.values(campaign.sendRecords || {}).map(r => r.status));
+  console.log(`[FSI] getStatus: total=${total}, sent=${sent}, failed=${failed}, skipped=${skipped}, status=${campaign.status}`);
 
   // Get next alarm
   let nextAlarmMinutes = null;
@@ -946,11 +966,11 @@ async function getStatus() {
       sent,
       total,
       failed,
+      skipped,
       nextAlarmMinutes,
       estComplete: estCompleteStr,
       daysElapsed
-    },
-    lastSendError: data.lastSendError || null
+    }
   };
 }
 
@@ -987,7 +1007,7 @@ async function fetchHbaMembers() {
     const limit = 500;
 
     while (true) {
-      const data = await callHbaMcp('get_active_customers', { limit, offset });
+      const data = await callHbaMcp('admin_active_customers', { limit, offset });
       const customers = data.customers || [];
       const total = parseInt(data.totalCount || '0');
 
